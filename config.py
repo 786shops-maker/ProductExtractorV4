@@ -11,9 +11,9 @@ IMAGE_SIZES = [(600, 960), (500, 800), (400, 640), (300, 480)]
 JPEG_QUALITY = 95
 REMOVE_FACE = True
 
-# Fixed the space in REQUEST_TIMEOUT
+# FIXED: Removed the space in REQUEST_TIMEOUT
 REQUEST_TIMEOUT = 25 
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 HEADERS = {"User-Agent": USER_AGENT}
 
 LOG_FILE = LOG_FOLDER / "product_extractor.log"
