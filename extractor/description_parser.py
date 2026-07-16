@@ -20,16 +20,6 @@ class DescriptionParser:
             "plain", "woven", "sequin"
         ]
 
-    def get_shirt_fabric(self, text: str) -> str:
-        """Return just the base fabric name for the shirt."""
-        shirt_keywords = ["shirt", "front", "back", "sleeve", "kali", "motif"]
-        lines = text.split('.')
-        relevant_lines = [line for line in lines if any(kw in line.lower() for kw in shirt_keywords)]
-        if not relevant_lines:
-            relevant_lines = [text]
-        relevant_text = " ".join(relevant_lines)
-        return self._find_fabric(relevant_text)
-
     def clean_text(self, text: str) -> str:
         if not text:
             return ""
@@ -118,9 +108,9 @@ class DescriptionParser:
             return "Fabric: Dyed Lawn Trousers."
         
         relevant_text = " ".join(relevant_lines).lower()
-        
-        # FIXED: Check for specific fabric mentions FIRST before applying pattern
         fabric = self._find_fabric(relevant_text)
+        
+        # FIXED: ONLY mention embroidery if explicitly stated
         has_embroidery = "embroidered" in relevant_text
         
         if has_embroidery:
