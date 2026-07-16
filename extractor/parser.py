@@ -1,6 +1,6 @@
 """
 parser.py
-Production orchestrator for ProductExtractor V3.
+Production orchestrator for ProductExtractor.
 """
 import os
 import logging
@@ -16,7 +16,6 @@ from .image_finder import ImageFinder
 from .image_selector import ImageSelector
 from .image_downloader import ImageDownloader
 from .image_processor import ImageProcessor
-from .color_detector import ColorDetector
 from .output_writer import OutputWriter
 from .exceptions import ProductExtractorError
 
@@ -38,25 +37,20 @@ class Parser:
         self.image_selector = ImageSelector()
         self.downloader = ImageDownloader()
         self.processor = ImageProcessor()
-        self.color_detector = ColorDetector()
         
         self.writer = OutputWriter(root_folder=output_dir)
         self.output_dir = output_dir
 
-    def parse(self, url: str, progress_callback=None):
+    def parse(self, url: str):
         logger.info("Processing %s", url)
         try:
-            if progress_callback:
-                progress_callback(10, "Fetching page...")
-            
-            # 1. Fetch raw HTML
+            # 1. Fetch raw HTML (this is a string)
             html = self.fetcher.download(url)
-            
-            if progress_callback:
-                progress_callback(25, "Extracting metadata...")
             
             # 2. Extract metadata
             brand = self.brand_detector.detect(url)
+            
+            # Get clean text specifically for the description parser
             clean_text = self.cleaner.text(html)
             
             product = {
@@ -69,22 +63,15 @@ class Parser:
                 "price_info": self.price_parser.parse(html),
             }
 
-            if progress_callback:
-                progress_callback(40, "Finding images...")
-
             # 3. Extract and process images
             images = self.image_finder.find(html, url)
             selected_images = self.image_selector.select(images)
             
-            if progress_callback:
-                progress_callback(55, "Downloading images...")
-            
+            # Download images to a temp folder
             temp_img_dir = os.path.join(self.output_dir, "temp_images")
             downloaded_files = self.downloader.download_images(selected_images, temp_img_dir)
             
-            if progress_callback:
-                progress_callback(70, "Processing images...")
-            
+            # Process images
             safe_brand = brand or "Unknown"
             pid = product["product_id"] or "no-id"
             
@@ -99,32 +86,10 @@ class Parser:
 
             product["images"] = processed_images
 
-            if progress_callback:
-                progress_callback(85, "Detecting dress color...")
-            
-            # 4. Detect color - FIRST from page text, then from image
-            dress_color = ""
-            if processed_images:
-                dress_color = self.color_detector.detect_color(html, processed_images[0])
-            else:
-                dress_color = self.color_detector.detect_color(html)
-            
-            # 5. Build the display title: "Brand Color Fabric Suit"
-            shirt_fabric = self.description_parser.get_shirt_fabric(clean_text)
-            display_title = f"{brand} {dress_color} {shirt_fabric} Suit".strip()
-            # Clean up double spaces
-            display_title = " ".join(display_title.split())
-            product["display_title"] = display_title
-            product["dress_color"] = dress_color
-
-            if progress_callback:
-                progress_callback(95, "Saving files...")
-            
-            # 6. Save output using the new writer
-            self.writer.save_product(product)
-            
-            if progress_callback:
-                progress_callback(100, "Done!")
+            # 4. Save output
+            self.writer.save_metadata(safe_brand, pid, product)
+            self.writer.save_description(safe_brand, pid, product["description"])
+            self.writer.save_html(safe_brand, pid, html)
             
             logger.info("Finished %s", url)
             return product
