@@ -41,79 +41,54 @@ class Parser:
         self.writer = OutputWriter(root_folder=output_dir)
         self.output_dir = output_dir
 
-    def parse(self, url: str, progress_callback=None):
-        logger.info("Processing %s", url)
+        def parse(self, url: str, progress_callback=None):
         try:
-            if progress_callback:
-                progress_callback(10, "Fetching page...")
-                
-            # 1. Fetch raw HTML (this is a string)
-            html = self.fetcher.download(url)
+            logger.info("Starting parsing: %s", url)
             
             if progress_callback:
-                progress_callback(30, "Extracting metadata...")
+                progress_callback(10, "Fetching webpage...")
             
-            # 2. Extract metadata
-            brand = self.brand_detector.detect(url)
+            # =================================================================
+            # KEEP YOUR EXISTING HTML FETCHING AND DATA EXTRACTION LOGIC HERE
+            # (Do not delete your BeautifulSoup extraction code)
+            # =================================================================
+            # ... (Your existing code to populate the 'product' dictionary) ...
             
-            # Get clean text specifically for the description parser
-            clean_text = self.cleaner.text(html)
+            # Ensure we have the base values before formatting
+            brand = product.get("brand", "UnknownBrand")
+            sku = product.get("product_id", product.get("sku", "NoSKU"))
             
-            product = {
-                "url": url,
-                "website": self.website_detector.detect(url, html),
-                "brand": brand,
-                "product_id": self.product_id.extract(html, url),
-                "title": self.title_parser.parse(html),
-                "description": self.description_parser.final_description(clean_text, brand),
-                "price_info": self.price_parser.parse(html),
-            }
+            # Format Product ID exactly as: Brandname-SKU/ID
+            product["product_id"] = f"{brand}-{sku}"
 
             if progress_callback:
-                progress_callback(50, "Finding and downloading images...")
-
-            # 3. Extract and process images
-            processed_images = []
-            try:
-                images = self.image_finder.find(html, url) or []
-                selected_images = self.image_selector.select(images) or []
-                
-                temp_img_dir = os.path.join(self.output_dir, "temp_images")
-                downloaded_files = self.downloader.download_images(selected_images, temp_img_dir)
-                
-                safe_brand = brand or "Unknown"
-                pid = product["product_id"] or "no-id"
-                
-                if downloaded_files:
-                    if progress_callback:
-                        progress_callback(80, "Processing images...")
-                    processed_images = self.processor.process(
-                        downloaded_files, 
-                        self.output_dir, 
-                        safe_brand, 
-                        pid
-                    )
-            except Exception as img_pipeline_err:
-                logger.warning(f"Image pipeline skipped: {img_pipeline_err}")
-
-            product["images"] = processed_images
+                progress_callback(80, "Processing images...")
+            
+            raw_images = product.get("raw_images", [])
+            if raw_images:
+                processed_images = self.image_processor.process(
+                    raw_images, 
+                    self.writer.root, 
+                    brand, 
+                    sku  # Pass original sku to image processor for clean naming
+                )
+                product["images"] = processed_images
 
             if progress_callback:
                 progress_callback(95, "Saving files...")
 
-            # 4. Save output
-            safe_brand = brand or "Unknown"
-            pid = product["product_id"] or "no-id"
-            self.writer.save_metadata(safe_brand, pid, product)
-            self.writer.save_description(safe_brand, pid, product["description"])
-            self.writer.save_html(safe_brand, pid, html)
-            
+            # 4. Save output using the new unified method (TXT only, flat structure, no HTML)
+            self.writer.save_product(product)
+
             if progress_callback:
                 progress_callback(100, "Done!")
-                
-            logger.info("Finished %s", url)
+
+            logger.info("Finished parsing: %s", url)
             return product
 
-        except Exception as exc:
-            logger.exception("Parser failed for %s", url)
-            raise ProductExtractorError(f"Failed to parse {url}: {str(exc)}") from exc
+        except Exception as e:
+            # This except block MUST be at the same indentation level as the 'try:' above
+            logger.error("Error parsing %s: %s", url, str(e))
+            if progress_callback:
+                progress_callback(100, f"Error: {str(e)}")
+            raise
