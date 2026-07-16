@@ -1,31 +1,18 @@
 """
-Product Extractor V2
 image_processor.py
 Production Image Processing Engine
 """
 from pathlib import Path
-from typing import List
 import hashlib
 import cv2
 import numpy as np
 from PIL import Image
 
-# ----------------------------------------
-# Output Sizes
-# ----------------------------------------
 PRIMARY_WIDTH = 600
 PRIMARY_HEIGHT = 960
 SECONDARY_WIDTH = 500
 SECONDARY_HEIGHT = 800
-
-# ----------------------------------------
-# JPG Quality
-# ----------------------------------------
 JPG_QUALITY = 95
-
-# ----------------------------------------
-# Face Detection
-# ----------------------------------------
 CASCADE_FILE = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
 
 class ImageProcessor:
@@ -37,17 +24,6 @@ class ImageProcessor:
         if image.mode != "RGB":
             image = image.convert("RGB")
         return image
-    
-    def image_size(self, image):
-        return image.width, image.height
-    
-    def is_large_enough(self, image):
-        w, h = self.image_size(image)
-        if w >= PRIMARY_WIDTH and h >= PRIMARY_HEIGHT:
-            return True
-        if w >= SECONDARY_WIDTH and h >= SECONDARY_HEIGHT:
-            return True
-        return False
     
     def file_hash(self, filename):
         h = hashlib.md5()
@@ -85,24 +61,30 @@ class ImageProcessor:
         faces = sorted(faces, key=lambda f: f[2] * f[3], reverse=True)
         return faces[0]
     
+    def is_likely_back_view(self, image):
+        """Detect if image is a back view."""
+        rgb = np.array(image)
+        gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+        faces = self.face_detector.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=7, minSize=(80, 80))
+        
+        if len(faces) == 0:
+            return True
+        
+        largest_face = max(faces, key=lambda f: f[2] * f[3])
+        face_area = largest_face[2] * largest_face[3]
+        image_area = image.width * image.height
+        
+        if face_area < (image_area * 0.015):
+            return True
+        
+        return False
+
     def chin_y(self, face):
         x, y, w, h = face
         return int(y + h * 0.90)
     
-    def is_likely_back_view(self, image):
-        rgb = np.array(image)
-        gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
-        faces = self.face_detector.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=7, minSize=(80, 80))
-        if len(faces) == 0:
-            return True
-        largest_face = max(faces, key=lambda f: f[2] * f[3])
-        face_area = largest_face[2] * largest_face[3]
-        image_area = image.width * image.height
-        if face_area < (image_area * 0.015):
-            return True
-        return False
-
     def crop_below_chin(self, image):
+        """Smart crop that detects back views."""
         if self.is_likely_back_view(image):
             return self.smart_crop_back_view(image)
         
@@ -111,28 +93,28 @@ class ImageProcessor:
             return self.smart_crop(image)
         
         crop_top = self.chin_y(face)
-        width = image.width
         height = image.height
         
+        # Validate detection
         if crop_top > height * 0.45:
             return self.smart_crop(image)
         
         crop_top = max(crop_top, int(height * 0.12))
         crop_top = min(crop_top, int(height * 0.35))
         
-        return image.crop((0, crop_top, width, height))
+        return image.crop((0, crop_top, image.width, height))
     
     def smart_crop_back_view(self, image):
-        width = image.width
+        """Gentle crop for back views."""
         height = image.height
         crop_top = int(height * 0.08)
-        return image.crop((0, crop_top, width, height))
+        return image.crop((0, crop_top, image.width, height))
     
     def smart_crop(self, image):
-        width = image.width
+        """Fallback crop."""
         height = image.height
         crop_top = int(height * 0.18)
-        return image.crop((0, crop_top, width, height))
+        return image.crop((0, crop_top, image.width, height))
     
     def resize_keep_ratio(self, image, target_width, target_height):
         src_w = image.width
@@ -155,18 +137,12 @@ class ImageProcessor:
         
         return image.crop((left, top, right, bottom))
     
-    def resize_primary(self, image):
-        return self.resize_keep_ratio(image, PRIMARY_WIDTH, PRIMARY_HEIGHT)
-    
-    def resize_secondary(self, image):
-        return self.resize_keep_ratio(image, SECONDARY_WIDTH, SECONDARY_HEIGHT)
-    
     def best_resize(self, image):
         w = image.width
         h = image.height
         if w >= PRIMARY_WIDTH and h >= PRIMARY_HEIGHT:
-            return self.resize_primary(image)
-        return self.resize_secondary(image)
+            return self.resize_keep_ratio(image, PRIMARY_WIDTH, PRIMARY_HEIGHT)
+        return self.resize_keep_ratio(image, SECONDARY_WIDTH, SECONDARY_HEIGHT)
     
     def process(self, image_files, output_folder, brand, product_id):
         safe_brand = str(brand).replace(" ", "-").replace("/", "-").replace("\\", "-")
