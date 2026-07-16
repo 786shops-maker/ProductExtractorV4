@@ -32,7 +32,7 @@ class Parser:
         self.price_parser = PriceParser()
         self.product_id = ProductIDExtractor()
         
-        # Image pipeline
+        # Image pipeline components
         self.image_finder = ImageFinder()
         self.image_selector = ImageSelector()
         self.downloader = ImageDownloader()
@@ -41,11 +41,17 @@ class Parser:
         self.writer = OutputWriter(root_folder=output_dir)
         self.output_dir = output_dir
 
-    def parse(self, url: str):
+    def parse(self, url: str, progress_callback=None):
         logger.info("Processing %s", url)
         try:
+            if progress_callback:
+                progress_callback(10, "Fetching page...")
+                
             # 1. Fetch raw HTML (this is a string)
             html = self.fetcher.download(url)
+            
+            if progress_callback:
+                progress_callback(30, "Extracting metadata...")
             
             # 2. Extract metadata
             brand = self.brand_detector.detect(url)
@@ -63,34 +69,48 @@ class Parser:
                 "price_info": self.price_parser.parse(html),
             }
 
+            if progress_callback:
+                progress_callback(50, "Finding and downloading images...")
+
             # 3. Extract and process images
-            images = self.image_finder.find(html, url)
-            selected_images = self.image_selector.select(images)
-            
-            # Download images to a temp folder
-            temp_img_dir = os.path.join(self.output_dir, "temp_images")
-            downloaded_files = self.downloader.download_images(selected_images, temp_img_dir)
-            
-            # Process images
-            safe_brand = brand or "Unknown"
-            pid = product["product_id"] or "no-id"
-            
             processed_images = []
-            if downloaded_files:
-                processed_images = self.processor.process(
-                    downloaded_files, 
-                    self.output_dir, 
-                    safe_brand, 
-                    pid
-                )
+            try:
+                images = self.image_finder.find(html, url) or []
+                selected_images = self.image_selector.select(images) or []
+                
+                temp_img_dir = os.path.join(self.output_dir, "temp_images")
+                downloaded_files = self.downloader.download_images(selected_images, temp_img_dir)
+                
+                safe_brand = brand or "Unknown"
+                pid = product["product_id"] or "no-id"
+                
+                if downloaded_files:
+                    if progress_callback:
+                        progress_callback(80, "Processing images...")
+                    processed_images = self.processor.process(
+                        downloaded_files, 
+                        self.output_dir, 
+                        safe_brand, 
+                        pid
+                    )
+            except Exception as img_pipeline_err:
+                logger.warning(f"Image pipeline skipped: {img_pipeline_err}")
 
             product["images"] = processed_images
 
+            if progress_callback:
+                progress_callback(95, "Saving files...")
+
             # 4. Save output
+            safe_brand = brand or "Unknown"
+            pid = product["product_id"] or "no-id"
             self.writer.save_metadata(safe_brand, pid, product)
             self.writer.save_description(safe_brand, pid, product["description"])
             self.writer.save_html(safe_brand, pid, html)
             
+            if progress_callback:
+                progress_callback(100, "Done!")
+                
             logger.info("Finished %s", url)
             return product
 
