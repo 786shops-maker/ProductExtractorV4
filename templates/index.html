@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Extract Product — Product Extractor V3</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        body {
+            background: #f5f7fb;
+            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .main-card {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 5px 25px rgba(0,0,0,0.08);
+            padding: 2.5rem;
+            margin-top: 3rem;
+        }
+        .header-gradient {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2rem;
+            border-radius: 15px 15px 0 0;
+            margin: -2.5rem -2.5rem 2rem -2.5rem;
+        }
+        .btn-extract {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            padding: 12px 40px;
+            border-radius: 50px;
+            color: white;
+            font-weight: 500;
+        }
+        .btn-extract:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+            color: white;
+        }
+        .btn-extract:disabled {
+            opacity: 0.7;
+        }
+        .progress {
+            height: 25px;
+            border-radius: 50px;
+            background: #e9ecef;
+        }
+        .progress-bar {
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            border-radius: 50px;
+            font-weight: 500;
+            transition: width 0.4s ease;
+        }
+        .status-message {
+            color: #667eea;
+            font-weight: 500;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="row justify-content-center">
+            <div class="col-lg-8">
+                <div class="main-card">
+                    <div class="header-gradient">
+                        <h2 class="mb-0"><i class="bi bi-box-seam-fill me-2"></i> Extract Product</h2>
+                        <p class="mb-0 mt-2 opacity-75">Paste a product URL to extract all details automatically</p>
+                    </div>
+                    
+                    <form id="extractForm">
+                        <div class="mb-4">
+                            <label for="url" class="form-label fw-bold">Product URL</label>
+                            <input type="url" class="form-control form-control-lg" id="url" name="url" 
+                                   placeholder="https://www.sanasafinaz.com/products/..." required>
+                        </div>
+                        
+                        <button type="submit" class="btn btn-extract btn-lg" id="extractBtn">
+                            <i class="bi bi-search me-2"></i> Extract Product
+                        </button>
+                    </form>
+                    
+                    <div id="progressSection" class="mt-4" style="display: none;">
+                        <div class="progress">
+                            <div class="progress-bar" id="progressBar" role="progressbar" style="width: 0%">0%</div>
+                        </div>
+                        <p class="status-message text-center" id="statusMessage">Starting...</p>
+                    </div>
+                </div>
+                
+                <div class="text-center mt-3">
+                    <a href="/" class="text-muted text-decoration-none">
+                        <i class="bi bi-house-door me-1"></i> Back to Home
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('extractForm');
+        const btn = document.getElementById('extractBtn');
+        const progressSection = document.getElementById('progressSection');
+        const progressBar = document.getElementById('progressBar');
+        const statusMessage = document.getElementById('statusMessage');
+        let pollInterval;
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Extracting...';
+            progressSection.style.display = 'block';
+            
+            const url = document.getElementById('url').value;
+            const formData = new FormData();
+            formData.append('url', url);
+            
+            try {
+                const response = await fetch('/run-extract', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                
+                if (!data.success) {
+                    alert(data.error);
+                    resetForm();
+                    return;
+                }
+                
+                // Start polling for progress
+                pollInterval = setInterval(checkProgress, 500);
+            } catch (err) {
+                alert('Error: ' + err.message);
+                resetForm();
+            }
+        });
+
+        async function checkProgress() {
+            try {
+                const response = await fetch('/progress');
+                const data = await response.json();
+                
+                progressBar.style.width = data.percent + '%';
+                progressBar.textContent = data.percent + '%';
+                statusMessage.textContent = data.message;
+                
+                if (!data.running && data.percent >= 100) {
+                    clearInterval(pollInterval);
+                    setTimeout(() => {
+                        if (data.error) {
+                            alert('Error: ' + data.error);
+                            resetForm();
+                        } else {
+                            window.location.href = '/result';
+                        }
+                    }, 500);
+                }
+            } catch (err) {
+                console.error('Progress check failed:', err);
+            }
+        }
+
+        function resetForm() {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-search me-2"></i> Extract Product';
+            progressSection.style.display = 'none';
+            progressBar.style.width = '0%';
+            progressBar.textContent = '0%';
+        }
+    </script>
+</body>
+</html>
