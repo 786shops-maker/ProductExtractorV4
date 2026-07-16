@@ -1,9 +1,8 @@
 """
 image_selector.py
 Selects the best clothing/dress product images.
-Filters out unrelated products like perfumes, accessories, etc.
+Aggressively filters out unrelated products like perfumes, accessories, etc.
 """
-from urllib.parse import urlparse
 import re
 
 class ImageSelector:
@@ -17,14 +16,15 @@ class ImageSelector:
             "perfume", "fragrance", "cologne", "parfum", "scent", "attar",
             "watch", "jewelry", "jewellery", "bracelet", "necklace", "ring", "earring",
             "shoe", "footwear", "bag", "purse", "wallet", "belt", "handbag",
-            "cosmetic", "makeup", "lipstick", "foundation", "powder"
+            "cosmetic", "makeup", "lipstick", "foundation", "powder", "soap", "lotion"
         ]
         
         # Words that indicate good clothing images
         self.clothing_keywords = [
             "dress", "suit", "shirt", "trouser", "pants", "shalwar", "kameez",
             "unstitched", "3-piece", "2-piece", "fabric", "lawn", "chiffon",
-            "embroidered", "printed", "sleeve", "front", "back", "model-wearing"
+            "embroidered", "printed", "sleeve", "front", "back", "model-wearing",
+            "kurti", "tunic", "abaya", "hijab", "scarf"
         ]
 
     def score(self, image):
@@ -35,20 +35,15 @@ class ImageSelector:
         alt = image.get("alt", "").lower()
         combined = url + " " + alt
         
-        # Penalize excluded categories HEAVILY
-        for word in self.exclude_categories:
-            if word in combined:
-                score -= 10000000  # Massive penalty
-        
         # Base score from dimensions
         score += width * height
         
         # Strong preference for portrait images (clothing shots)
         if height > width:
             ratio = height / width
-            if 1.2 <= ratio <= 2.5:  # Ideal product photo ratio
+            if 1.2 <= ratio <= 2.5:
                 score += 500000
-            elif ratio > 2.5:  # Very tall (model shot)
+            elif ratio > 2.5:
                 score += 300000
         
         # Boost clothing-related keywords
@@ -61,29 +56,33 @@ class ImageSelector:
             score += 300000
         elif width >= 600 and height >= 800:
             score += 100000
-        
+            
         return score
 
     def is_clothing_image(self, image):
-        """Determine if an image is likely a clothing/dress image."""
+        """Strictly determine if an image is a clothing/dress image."""
         url = image["url"].lower()
         alt = image.get("alt", "").lower()
         combined = url + " " + alt
         
-        # Check for excluded categories
+        # 1. Immediate rejection for excluded categories
         for word in self.exclude_categories:
             if word in combined:
                 return False
+                
+        # 2. Immediate rejection for related product URLs
+        if any(word in url for word in ["related", "recommend", "cross-sell", "upsell", "you-may-also-like"]):
+            return False
         
-        # Check for clothing indicators
+        # 3. Accept if it has explicit clothing keywords
         for word in self.clothing_keywords:
             if word in combined:
                 return True
         
-        # If it's a portrait image and not excluded, likely clothing
+        # 4. Fallback: If it's a high-quality portrait image and NOT excluded, assume it's clothing
         width = image.get("width", 0)
         height = image.get("height", 0)
-        if height > width * 1.2:
+        if width >= 400 and height >= 500 and (height / width) > 1.2:
             return True
         
         return False
@@ -92,7 +91,6 @@ class ImageSelector:
         output = []
         seen = set()
         for img in images:
-            # Use base URL without query params for deduplication
             base_url = img["url"].split("?")[0]
             if base_url in seen:
                 continue
@@ -101,22 +99,10 @@ class ImageSelector:
         return output
 
     def remove_small(self, images):
-        output = []
-        for img in images:
-            if img.get("width", 0) < self.min_width:
-                continue
-            if img.get("height", 0) < self.min_height:
-                continue
-            output.append(img)
-        return output
+        return [img for img in images if img.get("width", 0) >= self.min_width and img.get("height", 0) >= self.min_height]
 
     def filter_clothing_only(self, images):
-        """Keep only clothing/dress images, remove perfumes/accessories."""
         return [img for img in images if self.is_clothing_image(img)]
-
-    def sort(self, images):
-        images.sort(key=self.score, reverse=True)
-        return images
 
     def select(self, images):
         if not images:
@@ -127,18 +113,14 @@ class ImageSelector:
         
         # Step 2: Remove too-small images
         images = self.remove_small(images)
-        
         if not images:
             return []
         
-        # Step 3: CRITICAL - Filter out non-clothing items (perfumes, accessories, etc.)
+        # Step 3: CRITICAL - Filter out non-clothing items
         images = self.filter_clothing_only(images)
-        
         if not images:
             return []
         
-        # Step 4: Sort by score
-        images = self.sort(images)
-        
-        # Step 5: Return top images
+        # Step 4: Sort by score and return top images
+        images.sort(key=self.score, reverse=True)
         return images[:self.max_images]
