@@ -1,6 +1,7 @@
 """
 description_parser.py
 Intelligent description formatter for Pakistani clothing brands.
+Strips measurements, noise, and standardizes output into a clean format.
 """
 import re
 import logging
@@ -9,7 +10,7 @@ logger = logging.getLogger("ProductExtractor")
 
 class DescriptionParser:
     def __init__(self):
-        # FIXED: Removed trailing spaces
+        # FIXED: Removed trailing spaces from all strings
         self.fabrics = [
             "lawn", "cambric", "dobby", "cotton", "jacquard", 
             "chiffon", "organza", "silk", "poly cotton", "rocket net", 
@@ -20,10 +21,24 @@ class DescriptionParser:
             "plain", "woven", "sequin"
         ]
 
+    # FIXED: Added the missing method that parser.py is trying to call
+    def get_shirt_fabric(self, text: str) -> str:
+        """Return just the base fabric name for the shirt (for title generation)."""
+        shirt_keywords = ["shirt", "front", "back", "sleeve", "kali", "motif"]
+        lines = text.split('.')
+        relevant_lines = [line for line in lines if any(kw in line.lower() for kw in shirt_keywords)]
+        if not relevant_lines:
+            relevant_lines = [text]
+        relevant_text = " ".join(relevant_lines)
+        return self._find_fabric(relevant_text)
+
     def clean_text(self, text: str) -> str:
         if not text:
             return ""
+        # 1. Remove measurements
         text = re.sub(r'\b\d+(?:\.\d+)?\s*(?:meters?|m|yards?|yd|pcs?|pieces?)\b', '', text, flags=re.IGNORECASE)
+        
+        # 2. Remove common noise phrases and disclaimers
         noise_patterns = [
             r'(?i)note\s*:.*',
             r'(?i)\*\s*the stitch style.*',
@@ -37,6 +52,8 @@ class DescriptionParser:
         ]
         for pattern in noise_patterns:
             text = re.sub(pattern, '', text)
+        
+        # 3. Normalize whitespace
         text = re.sub(r'\s+', ' ', text).strip()
         return text
 
@@ -110,7 +127,7 @@ class DescriptionParser:
         relevant_text = " ".join(relevant_lines).lower()
         fabric = self._find_fabric(relevant_text)
         
-        # FIXED: ONLY mention embroidery if explicitly stated
+        # FIXED: ONLY mention embroidery if explicitly stated in the trouser lines
         has_embroidery = "embroidered" in relevant_text
         
         if has_embroidery:
@@ -131,6 +148,7 @@ class DescriptionParser:
         relevant_text = " ".join(relevant_lines).lower()
         fabric = self._find_fabric(relevant_text)
         
+        # FIXED: ONLY mention embroidery/pallu if explicitly stated in the dupatta lines
         has_embroidery = "embroidered" in relevant_text
         has_pallu = "pallu" in relevant_text or "pallo" in relevant_text
         
