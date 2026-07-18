@@ -59,14 +59,13 @@ class Parser:
 
             # 2. Extract metadata
             brand = self.brand_detector.detect(url) or "Unknown"
-            clean_text = self.cleaner.text(html)
             
             # ==========================================
             # SMART SKU EXTRACTION (Prioritizes reliable sources)
             # ==========================================
             raw_sku = None
             
-            # Step 1: Look in JSON-LD (Structured Data) - Most reliable
+            # Step 1: Look in JSON-LD (Structured Data)
             for script in soup.find_all('script', type='application/ld+json'):
                 try:
                     data = json.loads(script.string)
@@ -90,22 +89,20 @@ class Parser:
                 if meta_sku and meta_sku.get('content'):
                     raw_sku = str(meta_sku['content']).strip().upper()
 
-            # Step 3: Extract from URL slug (Highly reliable for fashion brands like Alkaram)
-            # We do this BEFORE broad HTML regex to avoid false positives like "CLASS"
+            # Step 3: Extract from URL slug
             if not raw_sku:
                 slug = url.rstrip('/').split('/')[-1]
                 parts = slug.split('-')
                 if len(parts) >= 3:
-                    # Heuristic: if the 3rd to last part has letters and numbers (like ec338 or 3p26)
                     third_to_last = parts[-3]
                     if re.search(r'[A-Za-z].*\d|\d.*[A-Za-z]', third_to_last) or len(third_to_last) >= 5:
                         raw_sku = "-".join(parts[-3:]).upper()
                     else:
-                        raw_sku = "-".join(parts[-3:]).upper() # Fallback to last 3 anyway
+                        raw_sku = "-".join(parts[-3:]).upper()
                 else:
                     raw_sku = slug.upper()
 
-            # Step 4: Broad HTML regex fallback (Only if URL didn't yield a good result)
+            # Step 4: Broad HTML regex fallback
             if not raw_sku or len(raw_sku) < 5:
                 patterns = [
                     r'(?:style\s*code|article\s*number|style\s*no)\s*[:\-]?\s*([A-Z0-9\-]{4,20})',
@@ -122,7 +119,6 @@ class Parser:
             # ==========================================
             clean_sku = raw_sku.replace(brand, "").strip("-").upper()
             
-            # Remove generic words that pollute the SKU
             generic_words = [
                 "RTS", "SHIRT", "TROUSER", "DUPATTA", "PRODUCTS", "PRODUCT", 
                 "THE", "SUIT", "LAWN", "COTTON", "DIGITAL", "UNSTITCHED", 
@@ -131,7 +127,6 @@ class Parser:
             for word in generic_words:
                 clean_sku = clean_sku.replace(word, "").strip("-")
                 
-            # If after cleaning it's empty, too short, or still generic, force URL extraction
             if len(clean_sku) < 5 or clean_sku in ["NO-ID", ""]:
                 slug = url.rstrip('/').split('/')[-1]
                 parts = slug.split('-')
@@ -140,16 +135,16 @@ class Parser:
                 else:
                     clean_sku = slug.upper()
                     
-            # Enforce Product ID format: Brandname-SKU/ID
             formatted_pid = f"{brand}-{clean_sku}"
 
+            # THIS IS THE EXACT BLOCK THAT WAS FAILING. IT IS NOW PERFECTLY INDENTED.
             product = {
                 "url": url,
                 "website": self.website_detector.detect(url, html),
                 "brand": brand,
                 "product_id": formatted_pid,
                 "title": self.title_parser.parse(html),
-                "description": self.description_parser.final_description(clean_text, brand),
+                "description": self.description_parser.final_description(html, brand),
                 "price_info": self.price_parser.parse(html),
             }
 
@@ -175,7 +170,7 @@ class Parser:
                     downloaded_files,
                     self.output_dir,
                     brand,
-                    clean_sku  # Pass clean_sku for cleaner image filenames
+                    clean_sku
                 )
 
             product["images"] = processed_images
@@ -183,10 +178,9 @@ class Parser:
             if progress_callback:
                 progress_callback(85, "Detecting dress color...")
 
-            # 4. Detect color - FIRST from page text/image
+            # 4. Detect color
             dress_color = self.color_detector.detect_color(html, processed_images[0] if processed_images else None)
             
-            # Fallback: if color detector fails, try to extract from URL slug (e.g., "-peach")
             if not dress_color:
                 slug = url.rstrip('/').split('/')[-1]
                 parts = slug.split('-')
@@ -195,10 +189,9 @@ class Parser:
                     if not potential_color.isdigit() and len(potential_color) > 2:
                         dress_color = potential_color
 
-            # 5. Build the display title: "Brand Color Fabric Suit"
-            shirt_fabric = self.description_parser.get_shirt_fabric(clean_text)
+            # 5. Build the display title
+            shirt_fabric = self.description_parser.get_shirt_fabric(html)
             display_title = f"{brand} {dress_color} {shirt_fabric} Suit".strip()
-            # Clean up double spaces
             display_title = " ".join(display_title.split())
             
             product["display_title"] = display_title
@@ -207,7 +200,7 @@ class Parser:
             if progress_callback:
                 progress_callback(95, "Saving files...")
 
-            # 6. Save output using the new writer (TXT only, flat structure, no HTML)
+            # 6. Save output
             self.writer.save_product(product)
 
             if progress_callback:

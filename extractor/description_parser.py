@@ -1,179 +1,158 @@
 """
-description_parser.py
-Intelligent description formatter for Pakistani clothing brands.
-Strips measurements, noise, and standardizes output into a clean format.
+================================================================================
+VERSION 4.0 - REGEX FIX (NO LINE SPLITTING)
+Uses regex context matching to ignore HTML formatting/line-break issues.
+================================================================================
 """
 import re
-import logging
-
-logger = logging.getLogger("ProductExtractor")
+from bs4 import BeautifulSoup
 
 class DescriptionParser:
     def __init__(self):
-        # FIXED: Removed trailing spaces from all strings
+        # Order matters: more specific fabrics first
         self.fabrics = [
-            "lawn", "cambric", "dobby", "cotton", "jacquard", 
-            "chiffon", "organza", "silk", "poly cotton", "rocket net", 
-            "net", "poly silk", "rawsilk"
-        ]
-        self.patterns = [
-            "digital printed", "embroidered", "printed", "dyed", 
-            "plain", "woven", "sequin"
+            "raw silk", "rocket net", "poly silk", "poly cotton", "wash & wear", 
+            "habotai", "lawn", "cotton", "silk", "chiffon", "organza", "dobby", 
+            "cambric", "khaddar", "velvet", "linen", "jacquard", "net", "siquence", "sequin"
         ]
 
-    # FIXED: Added the missing method that parser.py is trying to call
-    def get_shirt_fabric(self, text: str) -> str:
-        """Return just the base fabric name for the shirt (for title generation)."""
-        shirt_keywords = ["shirt", "front", "back", "sleeve", "kali", "motif"]
-        lines = text.split('.')
-        relevant_lines = [line for line in lines if any(kw in line.lower() for kw in shirt_keywords)]
-        if not relevant_lines:
-            relevant_lines = [text]
-        relevant_text = " ".join(relevant_lines)
-        return self._find_fabric(relevant_text)
-
-    def clean_text(self, text: str) -> str:
-        if not text:
-            return ""
-        # 1. Remove measurements
-        text = re.sub(r'\b\d+(?:\.\d+)?\s*(?:meters?|m|yards?|yd|pcs?|pieces?)\b', '', text, flags=re.IGNORECASE)
-        
-        # 2. Remove common noise phrases and disclaimers
-        noise_patterns = [
-            r'(?i)note\s*:.*',
-            r'(?i)\*\s*the stitch style.*',
-            r'(?i)base component consumption per suit',
-            r'(?i)add-on:.*',
-            r'(?i)sku:.*',
-            r'(?i)availability:.*',
-            r'(?i)product description',
-            r'(?i)fabric:\s*lawn\s*season:.*',
-            r'(?i)refer to product description.*'
-        ]
-        for pattern in noise_patterns:
-            text = re.sub(pattern, '', text)
-        
-        # 3. Normalize whitespace
-        text = re.sub(r'\s+', ' ', text).strip()
-        return text
-
-    def _find_fabric(self, text: str) -> str:
+    def _extract_fabric(self, text):
         text_lower = text.lower()
-        for fabric in self.fabrics:
-            if fabric in text_lower:
-                return fabric.title()
-        return "Lawn"
+        for f in self.fabrics:
+            if f in text_lower:
+                if f == "raw silk": return "Raw Silk"
+                if f == "rocket net": return "Rocket Net"
+                if f == "poly silk": return "Poly Silk"
+                if f == "poly cotton": return "Poly Cotton"
+                if f == "wash & wear": return "Wash & Wear"
+                return f.capitalize()
+        return "Fabric"
 
-    def _find_pattern(self, text: str) -> str:
+    def format_shirt(self, text):
         text_lower = text.lower()
-        found = [pattern.title() for pattern in self.patterns if pattern in text_lower]
+        fabric = self._extract_fabric(text_lower)
+        if fabric == "Fabric": fabric = "Lawn" # Fallback
         
-        if "Digital Printed" in found and "Embroidered" in found:
-            return "Digital Printed and Embroidered"
-        if "Embroidered" in found:
-            return "Embroidered"
-        if "Digital Printed" in found:
-            return "Digital Printed"
-        if "Printed" in found:
-            return "Printed"
-        if "Dyed" in found:
-            return "Dyed"
-        return "Plain"
-
-    def _find_parts(self, text: str) -> list:
-        text_lower = text.lower()
-        parts = []
-        if "front" in text_lower or "panel" in text_lower or "kali" in text_lower:
-            parts.append("front panels")
-        if "back" in text_lower:
-            parts.append("back panel")
-        if "sleeve" in text_lower:
-            parts.append("sleeves")
-        if "neckline" in text_lower or "neck" in text_lower:
-            parts.append("neckline")
-        return list(dict.fromkeys(parts))
-
-    def format_shirt(self, text: str) -> str:
-        shirt_keywords = ["shirt", "front", "back", "sleeve", "kali", "motif"]
-        lines = text.split('.')
-        relevant_lines = [line for line in lines if any(kw in line.lower() for kw in shirt_keywords)]
+        attrs = []
+        if 'floral printed' in text_lower: attrs.append('Floral Printed')
+        elif 'digital printed' in text_lower: attrs.append('Digital Printed')
+        elif 'printed' in text_lower: attrs.append('Printed')
         
-        if not relevant_lines:
-            relevant_lines = [text]
+        if 'dyed' in text_lower: attrs.append('Dyed')
+        if 'plain' in text_lower: attrs.append('Plain')
         
-        relevant_text = " ".join(relevant_lines)
-        fabric = self._find_fabric(relevant_text)
-        pattern = self._find_pattern(relevant_text)
-        parts = self._find_parts(relevant_text)
-        parts_str = f" {', '.join(parts)}" if parts else ""
-        
-        if "Digital Printed" in pattern and "Embroidered" in pattern:
-            return f"Fabric: Digital Printed {fabric} Shirt with embroidered{parts_str}."
-        elif "Embroidered" in pattern:
-            return f"Fabric: {fabric} Shirt with embroidered{parts_str}."
-        elif "Printed" in pattern or "Digital Printed" in pattern:
-            return f"Fabric: {pattern} {fabric} Shirt{parts_str}."
-        else:
-            return f"Fabric: {pattern} {fabric} Shirt{parts_str}."
-
-    def format_trouser(self, text: str) -> str:
-        trouser_keywords = ["trouser", "pants", "shalwar"]
-        lines = text.split('.')
-        relevant_lines = [line for line in lines if any(kw in line.lower() for kw in trouser_keywords)]
-        
-        if not relevant_lines:
-            return "Fabric: Dyed Lawn Trousers."
-        
-        relevant_text = " ".join(relevant_lines).lower()
-        fabric = self._find_fabric(relevant_text)
-        
-        # FIXED: ONLY mention embroidery if explicitly stated in the trouser lines
-        has_embroidery = "embroidered" in relevant_text
-        
-        if has_embroidery:
-            return f"Fabric: Embroidered {fabric} Trousers."
-        else:
-            pattern = self._find_pattern(relevant_text)
-            if pattern == "Plain":
-                return f"Fabric: {fabric} Trousers."
-            return f"Fabric: {pattern} {fabric} Trousers."
-
-    def format_dupatta(self, text: str) -> str:
-        lines = text.split('.')
-        relevant_lines = [line for line in lines if "dupatta" in line.lower()]
-        
-        if not relevant_lines:
-            return "Fabric: Lawn Dupatta."
-        
-        relevant_text = " ".join(relevant_lines).lower()
-        fabric = self._find_fabric(relevant_text)
-        
-        # FIXED: ONLY mention embroidery/pallu if explicitly stated in the dupatta lines
-        has_embroidery = "embroidered" in relevant_text
-        has_pallu = "pallu" in relevant_text or "pallo" in relevant_text
-        
-        if has_pallu:
-            if has_embroidery:
-                return f"Fabric: Embroidered {fabric} Dupatta with embroidered pallu."
+        emb_parts = []
+        if 'embroidered' in text_lower:
+            if 'neckline' in text_lower: emb_parts.append('neckline')
+            if 'front' in text_lower: emb_parts.append('front motifs')
+            if 'back' in text_lower: emb_parts.append('back')
+            if 'sleeves' in text_lower: emb_parts.append('sleeves')
+            
+        attr_str = " ".join(attrs)
+        emb_str = ""
+        if emb_parts:
+            if len(emb_parts) == 1:
+                emb_str = f" with embroidered {emb_parts[0]}"
             else:
-                return f"Fabric: {fabric} Dupatta with pallu."
-        elif has_embroidery:
-            return f"Fabric: Embroidered {fabric} Dupatta."
-        else:
-            pattern = self._find_pattern(relevant_text)
-            if pattern == "Plain":
-                return f"Fabric: {fabric} Dupatta."
-            return f"Fabric: {pattern} {fabric} Dupatta."
+                last = emb_parts.pop()
+                emb_str = f" with embroidered {', '.join(emb_parts)} and {last}"
+                
+        base = f"{fabric} shirt"
+        if attr_str: base = f"{attr_str} {fabric} shirt"
+        
+        if emb_str: return f"{base}{emb_str}."
+        return f"{base}."
 
-    def final_description(self, raw_text: str, brand: str = "Unknown") -> str:
-        cleaned = self.clean_text(raw_text)
-        shirt_desc = self.format_shirt(cleaned)
-        trouser_desc = self.format_trouser(cleaned)
-        dupatta_desc = self.format_dupatta(cleaned)
+    def format_trouser(self, text):
+        text_lower = text.lower()
+        # Extract context around "trouser" to avoid picking up shirt fabrics
+        match = re.search(r'([a-z\s&]{0,40}trouser[a-z\s&]{0,20})', text_lower)
+        t_text = match.group(1) if match else text_lower
         
-        output = f"Designer/Brand:\n{brand}.\n\n"
-        output += f"Shirt:\n{shirt_desc}\n\n"
-        output += f"Trousers:\n{trouser_desc}\n\n"
-        output += f"Dupatta:\n{dupatta_desc}"
+        fabric = self._extract_fabric(t_text)
+        if fabric == "Fabric": fabric = "Cotton" # Fallback
         
-        return output
+        attrs = []
+        if 'dyed' in t_text: attrs.append('Dyed')
+        if 'printed' in t_text: attrs.append('Printed')
+        if 'plain' in t_text: attrs.append('Plain')
+        
+        attr_str = " ".join(attrs)
+        if attr_str: return f"{attr_str} {fabric}."
+        return f"{fabric}."
+
+    def format_dupatta(self, text):
+        text_lower = text.lower()
+        # Extract context around "dupatta" or "shawl"
+        match = re.search(r'([a-z\s&]{0,40}(?:dupatta|shawl)[a-z\s&]{0,20})', text_lower)
+        if match:
+            d_text = match.group(1)
+            item_name = "Shawl" if "shawl" in d_text else "Dupatta"
+        else:
+            d_text = text_lower
+            item_name = "Dupatta"
+            
+        fabric = self._extract_fabric(d_text)
+        if fabric == "Fabric": fabric = "Fabric" # Fallback
+        
+        if 'pallu' in d_text and 'embroidered' in d_text:
+            return f"{fabric} with embroidered pallu."
+            
+        attrs = []
+        if 'digital printed' in d_text: attrs.append('Digital Printed')
+        elif 'printed' in d_text: attrs.append('Printed')
+        if 'embroidered' in d_text: attrs.append('Embroidered')
+            
+        attr_str = " ".join(attrs)
+        if attr_str:
+            if attr_str == "Embroidered":
+                return f"{fabric} {attr_str} {item_name}."
+            return f"{attr_str} {fabric} {item_name}."
+        return f"{fabric} {item_name}."
+
+    def final_description(self, html: str, brand: str) -> str:
+        # LOUD DEBUG MESSAGE TO VERIFY FILE IS LOADED
+        print("\n" + "!" * 50)
+        print("!!! RUNNING DESCRIPTION PARSER V4.0 - REGEX FIX !!!")
+        print("!" * 50 + "\n")
+        
+        soup = BeautifulSoup(html, 'html.parser')
+        
+        # Get all text from the page
+        raw_text = soup.get_text(separator=' ', strip=True)
+        
+        # Remove lengths, pieces, meters, yards, etc.
+        cleaned_text = re.sub(r'\b\d+(\.\d+)?\s*(meters?|yards?|pcs?|pieces?|meter|yard|pc|piece)\b', '', raw_text, flags=re.IGNORECASE)
+        cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()
+        
+        # Build the structured description using regex context matching
+        shirt_desc = self.format_shirt(cleaned_text)
+        trouser_desc = self.format_trouser(cleaned_text)
+        dupatta_desc = self.format_dupatta(cleaned_text)
+        
+        final_output = f"""Designer/Brand:
+{brand}.
+
+Shirt:
+Fabric: {shirt_desc}
+
+Trouser:
+Fabric: {trouser_desc}
+
+Dupatta:
+Fabric: {dupatta_desc}
+
+------------------------"""
+        return final_output.strip()
+
+    def get_shirt_fabric(self, html: str) -> str:
+        soup = BeautifulSoup(html, 'html.parser')
+        text = soup.get_text(separator=' ', strip=True).lower()
+        
+        for fabric in self.fabrics:
+            if re.search(rf'\b{fabric}\b', text):
+                if fabric == "raw silk": return "Raw Silk"
+                if fabric == "rocket net": return "Rocket Net"
+                if fabric == "poly silk": return "Poly Silk"
+                return fabric.capitalize()
+        return "Lawn"

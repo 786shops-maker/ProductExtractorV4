@@ -1,104 +1,94 @@
 """
 price_parser.py
-Universal price extractor with strict main-product targeting.
-Ignores "related products" and "you may also like" sections.
+Extracts product price robustly using JSON-LD, Meta tags, and proximity-based regex.
 """
 import re
+import json
 from bs4 import BeautifulSoup
 
 class PriceParser:
-    PRICE_PATTERNS = [
-        r"Rs\.?\s*([\d,]+)",
-        r"PKR\s*([\d,]+)",
-        r"Rs\s*([\d,]+)",
-        r"([\d,]+)\s*PKR",
-    ]
-    
-    def parse(self, html: str):
-        soup = BeautifulSoup(html, "lxml")
-        
-        # CRITICAL: Remove "related products" sections entirely
-        bad_selectors = [
-            '.product-recommendations', '.related-products', '.cross-sell', 
-            '.upsell-products', '.you-may-also-like', '.recently-viewed',
-            '.product-block-related', '.slider-related', '.grid__item'
-        ]
-        for selector in bad_selectors:
-            for bad_elem in soup.select(selector):
-                # Only remove if it contains price-like content
-                if any(p in bad_elem.get_text().lower() for p in ['rs', 'pkr', 'price']):
-                    bad_elem.decompose()
-        
-        prices = []
-        sale_prices = []
-        
-        # Find prices in MAIN product area only
-        main_selectors = [
-            '.product__price', '.product-price', '.price--current',
-            '.product__price--current', '.money', '.price-item--current'
-        ]
-        
-        for selector in main_selectors:
-            elements = soup.select(selector)
-            for elem in elements:
-                elem_text = elem.get_text(" ", strip=True)
-                
-                # Check if sale
-                classes = " ".join(elem.get("class", [])).lower()
-                parent_classes = " ".join(elem.parent.get("class", [])).lower()
-                is_sale = any(s in classes or s in parent_classes for s in ["sale", "discount", "special", "compare"])
-                
-                for pattern in self.PRICE_PATTERNS:
-                    matches = re.findall(pattern, elem_text, re.IGNORECASE)
-                    for match in matches:
-                        value = match.replace(",", "")
-                        try:
-                            value = int(value)
-                            if 1000 <= value <= 50000:  # Reasonable range
-                                if is_sale:
-                                    sale_prices.append(value)
-                                else:
-                                    prices.append(value)
-                        except:
-                            pass
-        
-        # If no structured prices, search text (but exclude related product text)
-        if not prices and not sale_prices:
-            # Get text from main product area only
-            main_area = soup.select_one('.product, .product-single, .product-detail')
-            if main_area:
-                text = main_area.get_text(" ", strip=True)
-            else:
-                text = soup.get_text(" ", strip=True)
-            
-            for pattern in self.PRICE_PATTERNS:
-                matches = re.findall(pattern, text, re.IGNORECASE)
-                for match in matches:
-                    value = match.replace(",", "")
-                    try:
-                        value = int(value)
-                        if 1000 <= value <= 50000:
-                            prices.append(value)
-                    except:
-                        pass
+    def parse(self, html: str) -> dict:
+        soup = BeautifulSoup(html, 'html.parser')
+        price = None
+        sale_price = None
 
-        # Deduplicate and sort
-        prices = sorted(list(set(prices)))
-        sale_prices = sorted(list(set(sale_prices)))
-        
-        result = {
-            "price": "",
-            "sale_price": "",
-            "currency": "PKR"
-        }
-        
-        # Combine all found prices
-        all_found = sorted(list(set(prices + sale_prices)))
-        
-        if len(all_found) >= 2:
-            result["price"] = str(all_found[-1])  # Highest
-            result["sale_price"] = str(all_found[0])  # Lowest
-        elif len(all_found) == 1:
-            result["price"] = str(all_found[0])
+        # 1. Try JSON-LD Structured Data (Most reliable for Shopify)
+        for script in soup.find_all('script', type='application/ld+json'):
+            try:
+                data = json.loads(script.string)
+                if isinstance(data, dict) and 'offers' in data:
+                    offers = data['offers']
+                    if isinstance(offers, dict):
+                        price = float(offers.get('price', 0))
+                    elif isinstance(offers, list) and len(offers) > 0:
+                        price = float(offers[0].get('price', 0))
+                elif isinstance(data, list):
+                    for item in data:
+                        if 'offers' in item:
+                            offers = item['offers']
+                            if isinstance(offers, dict):
+                                price = float(offers.get('price', 0))
+                                break
+                            elif isinstance(offers, list) and len(offers) > 0:
+                                price = float(offers[0].get('price', 0))
+                                break
+            except Exception:
+                pass
+
+        # 2. Try Meta Tags
+        if price is None:
+            meta_price = soup.find('meta', property='product:price:amount')
+            if meta_price and meta_price.get('content'):
+                try:
+                    price = float(meta_price['content'])
+                except ValueError:
+                    pass
+
+        # 3. Fallback: Proximity-based Regex (Ignores shipping/COD policy text)
+        if price is None:
+            text = soup.get_text(separator=' ', strip=True)
             
-        return result
+            # Find locations of key product indicators to anchor our search
+            indicators = ['add to cart', 'article no', 'product id', 'sku', 'pay in']
+            indicator_indices = [text.lower().find(ind) for ind in indicators if text.lower().find(ind) != -1]
+            
+            if indicator_indices:
+                # Use the first found indicator as the anchor
+                anchor = min(indicator_indices)
+                # Search window: 600 chars before to 600 chars after
+                start = max(0, anchor - 600)
+                end = min(len(text), anchor + 600)
+                search_text = text[start:end]
+            else:
+                search_text = text
+
+            # Find all prices in the search window
+            matches = re.findall(r'(?:PKR|Rs\.?|PKR\.?)\s*([\d,]+)', search_text, re.IGNORECASE)
+            if not matches:
+                matches = re.findall(r'([\d,]+)\s*(?:PKR|Rs\.?)', search_text, re.IGNORECASE)
+            
+            if matches:
+                valid_prices = []
+                for m in matches:
+                    try:
+                        val = float(m.replace(',', '').strip())
+                        if 500 < val < 100000:  # Reasonable product price range
+                            valid_prices.append(val)
+                    except ValueError:
+                        pass
+                
+                if valid_prices:
+                    # Sort prices. If there are multiple (e.g., original and sale), 
+                    # the lowest is usually the current active price.
+                    valid_prices.sort()
+                    price = valid_prices[0]
+
+        if price is not None:
+            price = int(price) if price.is_integer() else round(price, 2)
+        if sale_price is not None:
+            sale_price = int(sale_price) if sale_price.is_integer() else round(sale_price, 2)
+
+        return {
+            "price": str(price) if price else "",
+            "sale_price": str(sale_price) if sale_price else ""
+        }
