@@ -75,6 +75,68 @@ class BrandDetector:
             "so kamal": "So Kamal",
             "zellbury": "Zellbury",
         }
+
+        def clear(self):
+        self.candidates.clear()
+
+    def normalize(self, brand: str) -> str:
+
+        if not brand:
+            return ""
+
+        brand = brand.strip()
+
+        key = brand.lower()
+
+        return self.brand_alias.get(key, brand.title())
+
+    def brand_slug(self, brand: str) -> str:
+
+        brand = brand.lower()
+
+        brand = re.sub(r"[^a-z0-9]+", "", brand)
+
+        return brand
+
+    def add_candidate(self, brand, score, source):
+
+        if not brand:
+            return
+
+        brand = self.normalize(brand)
+
+        for c in self.candidates:
+
+            if c.brand == brand:
+
+                if score > c.score:
+                    c.score = score
+                    c.source = source
+
+                return
+
+        self.candidates.append(
+
+            BrandCandidate(
+
+                score,
+
+                brand,
+
+                source
+
+            )
+
+        )
+
+    def best(self):
+
+        if not self.candidates:
+            return None
+
+        self.candidates.sort(reverse=True)
+
+        return self.candidates[0]
     
     def detect(self, url: str) -> str:
         host = urlparse(url).netloc.lower()
