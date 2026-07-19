@@ -1,334 +1,1979 @@
 """
-Description parser for fashion product pages.
+ProductExtractorV4
+------------------
 
-This parser converts raw text/HTML from clothing websites into a structured
-description format such as:
+Production quality fashion description parser.
 
-Designer/Brand:
-Edenrobe.
+Purpose:
+    Convert raw fashion product descriptions from Pakistani clothing
+    websites into standardized structured descriptions.
+
+Supported sources:
+    - Shopify
+    - WooCommerce
+    - Magento
+    - Classic ASP
+    - Custom ecommerce systems
+
+Design principles:
+    - No site-specific rules
+    - No brand-specific parsing
+    - Prefer structured data first
+    - Normalize fashion terminology
+    - Remove marketing noise
+    - Keep only useful production information
+
+Output example:
 
 Shirt:
-Fabric: Chiffon shirt with embroidered neckline, front, back, sleeves, and borders.
+Fabric: Lawn
+Embroidery: Front, Back, Sleeves, Neckline
 
-Trousers:
-Fabric: Rawsilk Plain Trouser.
+Trouser:
+Fabric: Cambric
 
 Dupatta:
-Fabric: Net Embroidered Dupatta.
+Fabric: Chiffon
 """
 
+from __future__ import annotations
+
+import json
+import logging
 import re
-from typing import List, Optional
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Iterable, Any
+
 from bs4 import BeautifulSoup
 
 
-class DescriptionParser:
-    def __init__(self):
-        self.fabric_patterns = [
-            ("raw silk", "Raw Silk"),
-            ("rawsilk", "Raw Silk"),
-            ("rocket net", "Rocket Net"),
-            ("poly silk", "Poly Silk"),
-            ("poly cotton", "Poly Cotton"),
-            ("wash & wear", "Wash & Wear"),
-            ("habotai", "Habotai"),
-            ("lawn", "Lawn"),
-            ("cotton", "Cotton"),
-            ("silk", "Silk"),
-            ("chiffon", "Chiffon"),
-            ("organza", "Organza"),
-            ("dobby", "Dobby"),
-            ("cambric", "Cambric"),
-            ("khaddar", "Khaddar"),
-            ("velvet", "Velvet"),
-            ("linen", "Linen"),
-            ("jacquard", "Jacquard"),
-            ("net", "Net"),
-            ("siquence", "Sequin"),
-            ("sequin", "Sequin"),
-        ]
+logger = logging.getLogger(__name__)
 
-        self.component_keywords = {
-            "shirt": ["shirt", "kurta", "neckline", "sleeve", "sleeves", "front", "back", "border", "embroidered"],
-            "trouser": ["trouser", "shalwar", "pants", "pant"],
-            "dupatta": ["dupatta", "pallu"],
-        }
 
-    def _clean_text(self, text: str) -> str:
+# ============================================================
+# Data Models
+# ============================================================
+
+
+@dataclass
+class ComponentDescription:
+    """
+    Represents one clothing component.
+    """
+
+    name: str
+
+    fabrics: List[str] = field(default_factory=list)
+
+    colors: List[str] = field(default_factory=list)
+
+    embroidery_locations: List[str] = field(default_factory=list)
+
+    styles: List[str] = field(default_factory=list)
+
+
+@dataclass
+class ParsedDescription:
+    """
+    Complete normalized product description.
+    """
+
+    shirt: ComponentDescription = field(
+        default_factory=lambda: ComponentDescription("Shirt")
+    )
+
+    trouser: ComponentDescription = field(
+        default_factory=lambda: ComponentDescription("Trouser")
+    )
+
+    dupatta: ComponentDescription = field(
+        default_factory=lambda: ComponentDescription("Dupatta")
+    )
+
+    raw_text: str = ""
+
+
+
+# ============================================================
+# Normalization Dictionaries
+# ============================================================
+
+
+FABRIC_MAP: Dict[str, str] = {
+
+    # Lawn
+    "lawn": "Lawn",
+    "premium lawn": "Premium Lawn",
+    "swiss lawn": "Swiss Lawn",
+    "digital lawn": "Digital Lawn",
+    "slub lawn": "Slub Lawn",
+
+    # Cotton
+    "cotton": "Cotton",
+    "pure cotton": "Cotton",
+    "cambric": "Cambric",
+    "paper cotton": "Paper Cotton",
+
+    # Silk
+    "silk": "Silk",
+    "raw silk": "Raw Silk",
+    "rawsilk": "Raw Silk",
+    "tissue silk": "Tissue Silk",
+    "tissue": "Tissue Silk",
+    "russian silk": "Russian Silk",
+    "italian silk": "Italian Silk",
+    "poly silk": "Poly Silk",
+
+    # Chiffon
+    "chiffon": "Chiffon",
+    "crinkle chiffon": "Crinkle Chiffon",
+    "bamber chiffon": "Bamber Chiffon",
+
+    # Organza / Net
+    "organza": "Organza",
+    "net": "Net",
+    "khaddi net": "Khaddi Net",
+    "rocket net": "Rocket Net",
+    "poly net": "Poly Net",
+
+    # Velvet
+    "velvet": "Velvet",
+
+    # Linen
+    "linen": "Linen",
+    "irish linen": "Irish Linen",
+
+    # Khaddar
+    "khaddar": "Khaddar",
+    "slub khaddar": "Slub Khaddar",
+    "karandi": "Karandi",
+
+    # Other Pakistani fabrics
+    "jacquard": "Jacquard",
+    "self jacquard": "Self Jacquard",
+    "viscose": "Viscose",
+    "grip": "Grip",
+    "monark": "Monark",
+    "banarsi": "Banarsi",
+    "boski": "Boski",
+    "dobby": "Dobby",
+    "habotai": "Habotai",
+    "wash and wear": "Wash & Wear",
+    "wash & wear": "Wash & Wear",
+}
+
+
+
+COMPONENT_MAP: Dict[str, str] = {
+
+    "shirt": "Shirt",
+    "kurta": "Shirt",
+    "top": "Shirt",
+    "kameez": "Shirt",
+    "qameez": "Shirt",
+
+    "trouser": "Trouser",
+    "trousers": "Trouser",
+    "pant": "Trouser",
+    "pants": "Trouser",
+    "shalwar": "Trouser",
+    "bottom": "Trouser",
+
+    "dupatta": "Dupatta",
+    "dupatta": "Dupatta",
+    "scarf": "Dupatta",
+    "stole": "Dupatta",
+    "shawl": "Dupatta",
+}
+
+
+
+EMBROIDERY_LOCATION_MAP: Dict[str, str] = {
+
+    "neck": "Neckline",
+    "neckline": "Neckline",
+
+    "front": "Front",
+    "back": "Back",
+
+    "sleeve": "Sleeves",
+    "sleeves": "Sleeves",
+
+    "cuff": "Cuffs",
+    "cuffs": "Cuffs",
+
+    "panel": "Front Panel",
+    "front panel": "Front Panel",
+
+    "center panel": "Front Center Panel",
+
+    "side panel": "Side Panels",
+
+    "daman": "Daman",
+    "hem": "Hem",
+
+    "pallu": "Pallu",
+}
+
+
+
+# Terms removed completely from output
+
+IGNORED_TERMS = {
+
+    # accessories
+    "patch",
+    "patches",
+    "lace",
+    "border",
+    "borders",
+    "patti",
+    "tassel",
+    "tassels",
+    "button",
+    "buttons",
+    "belt",
+    "accessory",
+    "accessories",
+
+    # embroidery techniques
+    "sequin",
+    "sequins",
+    "dabka",
+    "naqshi",
+    "naqqashi",
+    "kora",
+    "cut dana",
+    "beads",
+    "pearls",
+    "diamante",
+    "diamantes",
+    "crystal",
+    "mirror",
+    "stones",
+    "tilla",
+    "zari",
+
+}
+
+# ============================================================
+# Text Cleaning Utilities
+# ============================================================
+
+
+class TextCleaner:
+    """
+    Responsible for removing HTML noise and normalizing text.
+    """
+
+    UNIT_PATTERN = re.compile(
+        r"\b\d+(?:\.\d+)?\s*"
+        r"(?:meters?|meter|yards?|yard|yds?|"
+        r"pcs?|pieces?|piece|pc|"
+        r"cm|cms|mm|inch|inches|in)\b",
+        flags=re.IGNORECASE,
+    )
+
+    MULTI_SPACE_PATTERN = re.compile(r"\s+")
+
+
+    @classmethod
+    def clean(cls, text: str) -> str:
+        """
+        General text cleaner.
+        """
+
         if not text:
             return ""
 
-        text = re.sub(r"<[^>]+>", " ", text)
+        text = str(text)
+
+        text = text.replace("\xa0", " ")
         text = text.replace("’", "'")
         text = text.replace("–", "-")
         text = text.replace("—", "-")
-        text = text.replace("\xa0", " ")
+
+        text = cls.UNIT_PATTERN.sub(" ", text)
 
         text = re.sub(
-            r"\b\d+(?:\.\d+)?\s*(?:meters?|meter|yards?|yard|pcs?|pieces?|piece|pc|m|cm|cms|inch|inches)\b",
+            r"<[^>]+>",
             " ",
-            text,
-            flags=re.IGNORECASE,
-        )
-        text = re.sub(
-            r"\(\s*\d+(?:\.\d+)?\s*(?:meters?|meter|yards?|yard|pcs?|pieces?|piece|pc|m|cm|cms|inch|inches)\s*\)",
-            " ",
-            text,
-            flags=re.IGNORECASE,
+            text
         )
 
-        text = re.sub(r"\s+", " ", text)
-        return text.strip(" -:;,.")
+        text = cls.MULTI_SPACE_PATTERN.sub(
+            " ",
+            text
+        )
 
-    def _dedup(self, items: List[str]) -> List[str]:
-        seen = []
-        result = []
-        for item in items:
-            clean = self._clean_text(item)
-            if clean and clean not in seen:
-                seen.append(clean)
-                result.append(clean)
-        return result
+        return text.strip(
+            " -:;,.|"
+        )
 
-    def _is_relevant_line(self, line: str) -> bool:
-        if not line:
-            return False
 
-        cleaned = self._clean_text(line)
-        if not cleaned:
-            return False
+    @classmethod
+    def normalize_case(cls, text: str) -> str:
 
-        lower = cleaned.lower()
-        keywords = [
-            "embroidered", "dupatta", "pallu", "trouser", "shalwar", "pants",
-            "shirt", "kurta", "neckline", "sleeve", "sleeves", "front", "back",
-            "border", "printed", "dyed", "plain", "fabric", "chiffon",
-            "lawn", "cotton", "silk", "cambric", "organza", "dobby",
-            "poly", "raw", "rocket", "khaddar"
-        ]
-        return any(k in lower for k in keywords)
-
-    def _extract_page_lines(self, soup: BeautifulSoup) -> List[str]:
-        lines: List[str] = []
-
-        # Full page text
-        full_text = soup.get_text("\n", strip=True)
-        for raw_line in full_text.split("\n"):
-            line = self._clean_text(raw_line)
-            if self._is_relevant_line(line):
-                lines.append(line)
-
-        # Meta descriptions
-        for attrs in [
-            {"name": "description"},
-            {"property": "og:description"},
-            {"name": "twitter:description"},
-        ]:
-            tag = soup.find("meta", attrs=attrs)
-            if tag and tag.get("content"):
-                line = self._clean_text(tag["content"])
-                if self._is_relevant_line(line):
-                    lines.append(line)
-
-        # Visible HTML text blocks
-        for tag in soup.find_all(["p", "li", "div", "span", "h1", "h2", "h3"]):
-            for raw_line in tag.get_text("\n", strip=True).split("\n"):
-                line = self._clean_text(raw_line)
-                if self._is_relevant_line(line):
-                    lines.append(line)
-
-        return self._dedup(lines)
-
-    def _classify_line(self, line: str) -> Optional[str]:
-        lower = line.lower()
-
-        if "dupatta" in lower or "pallu" in lower:
-            return "dupatta"
-
-        if any(k in lower for k in ["trouser", "shalwar", "pants", "pant"]):
-            return "trouser"
-
-        if any(k in lower for k in ["shirt", "kurta", "neckline", "sleeve", "sleeves", "front", "back", "border", "embroidered"]):
-            return "shirt"
-
-        return None
-
-    def _extract_fabric_from_line(self, line: str) -> Optional[str]:
-        lower = line.lower()
-
-        for pattern, canonical in self.fabric_patterns:
-            if pattern in lower:
-                return canonical
-
-        return None
-
-    def _extract_style_from_line(self, line: str) -> Optional[str]:
-        lower = line.lower()
-
-        if "floral" in lower and "printed" in lower:
-            return "Floral Printed"
-        if "digital" in lower and "printed" in lower:
-            return "Digital Printed"
-        if "printed" in lower and "plain" not in lower:
-            return "Printed"
-        if "plain" in lower:
-            return "Plain"
-        if "dyed" in lower:
-            return "Dyed"
-
-        return None
-
-    def _extract_embroidery_features_from_line(self, line: str) -> List[str]:
-        lower = line.lower()
-        features = []
-
-        if "neckline" in lower:
-            features.append("neckline")
-        if "front" in lower:
-            features.append("front")
-        if "back" in lower:
-            features.append("back")
-        if "sleeve" in lower or "sleeves" in lower:
-            features.append("sleeves")
-        if "border" in lower:
-            features.append("borders")
-        if "pallu" in lower:
-            features.append("pallu")
-
-        return features
-
-    def _unique_features(self, features: List[str]) -> List[str]:
-        seen = []
-        result = []
-        for item in features:
-            if item not in seen:
-                seen.append(item)
-                result.append(item)
-        return result
-
-    def _format_embroidery_phrase(self, features: List[str]) -> str:
-        if not features:
+        if not text:
             return ""
 
-        if len(features) == 1:
-            return f"with embroidered {features[0]}"
+        return text.strip()
 
-        if len(features) == 2:
-            return f"with embroidered {features[0]} and {features[1]}"
 
-        return f"with embroidered {', '.join(features[:-1])}, and {features[-1]}"
 
-    def format_shirt(self, lines: List[str]) -> str:
-        shirt_lines = [line for line in lines if self._classify_line(line) == "shirt"]
+# ============================================================
+# JSON-LD Extraction
+# ============================================================
 
-        if not shirt_lines:
-            return "Lawn shirt."
 
-        # Prefer the most descriptive shirt lines
-        shirt_lines = sorted(
-            shirt_lines,
-            key=lambda line: (
-                len(self._extract_embroidery_features_from_line(line)),
-                len(line),
-            ),
-            reverse=True,
+class StructuredDataExtractor:
+    """
+    Extracts product information from JSON-LD.
+
+    Most modern ecommerce systems expose:
+        - Shopify
+        - WooCommerce
+        - Magento
+
+    through schema.org Product objects.
+    """
+
+    def __init__(self, soup: BeautifulSoup):
+
+        self.soup = soup
+
+
+
+    def extract_json_ld(self) -> List[Dict[str, Any]]:
+        """
+        Extract all JSON-LD objects.
+        """
+
+        results = []
+
+
+        scripts = self.soup.find_all(
+            "script",
+            {
+                "type": "application/ld+json"
+            }
         )
 
-        fabric = self._extract_fabric_from_line(shirt_lines[0]) or "Lawn"
-        style = self._extract_style_from_line(shirt_lines[0])
-        features = self._unique_features(
-            [feature for line in shirt_lines for feature in self._extract_embroidery_features_from_line(line)]
+
+        for script in scripts:
+
+            try:
+
+                if not script.string:
+                    continue
+
+
+                data = json.loads(
+                    script.string.strip()
+                )
+
+
+                if isinstance(data, list):
+
+                    results.extend(data)
+
+                elif isinstance(data, dict):
+
+                    results.append(data)
+
+
+            except Exception:
+
+                logger.debug(
+                    "Invalid JSON-LD block ignored"
+                )
+
+
+        return results
+
+
+
+    def extract_product_objects(self) -> List[Dict[str, Any]]:
+        """
+        Return only Product schema objects.
+        """
+
+        products = []
+
+
+        for item in self.extract_json_ld():
+
+            if not isinstance(item, dict):
+                continue
+
+
+            item_type = item.get(
+                "@type",
+                ""
+            )
+
+
+            if isinstance(item_type, list):
+
+                if "Product" in item_type:
+                    products.append(item)
+
+
+            elif item_type == "Product":
+
+                products.append(item)
+
+
+
+        return products
+
+
+
+    def extract_description_text(self) -> str:
+        """
+        Extract description from JSON-LD.
+        """
+
+        texts = []
+
+
+        for product in self.extract_product_objects():
+
+            description = product.get(
+                "description"
+            )
+
+            if description:
+
+                texts.append(
+                    TextCleaner.clean(
+                        description
+                    )
+                )
+
+
+        return " ".join(texts)
+
+
+
+# ============================================================
+# HTML Content Extraction
+# ============================================================
+
+
+class HTMLContentExtractor:
+    """
+    Generic ecommerce HTML extractor.
+
+    Does not rely on:
+        - Shopify classes
+        - WooCommerce classes
+        - Magento classes
+
+    It reads semantic HTML only.
+    """
+
+    TAGS = [
+        "p",
+        "li",
+        "span",
+        "div",
+        "td",
+        "th",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+    ]
+
+
+    def __init__(self, soup: BeautifulSoup):
+
+        self.soup = soup
+
+
+
+    def extract_visible_text(self) -> List[str]:
+
+        lines = []
+
+
+        for tag in self.soup.find_all(
+            self.TAGS
+        ):
+
+            text = tag.get_text(
+                " ",
+                strip=True
+            )
+
+
+            text = TextCleaner.clean(
+                text
+            )
+
+
+            if text:
+
+                lines.append(
+                    text
+                )
+
+
+        return self._deduplicate(
+            lines
         )
 
-        if features:
-            if style and style.lower() not in ["plain", "dyed"]:
-                return f"{style} {fabric} shirt {self._format_embroidery_phrase(features)}."
-            return f"{fabric} shirt {self._format_embroidery_phrase(features)}."
 
-        if style:
-            return f"{style} {fabric} shirt."
 
-        return f"{fabric} shirt."
+    def extract_tables(self) -> List[str]:
 
-    def format_trouser(self, lines: List[str]) -> str:
-        trouser_lines = [line for line in lines if self._classify_line(line) == "trouser"]
+        rows = []
 
-        if not trouser_lines:
-            return "Cotton."
 
-        # Prefer the line that directly mentions Trouser
-        best = sorted(
-            trouser_lines,
-            key=lambda line: (len(line), line.count(" ")),
-            reverse=False,
-        )[0]
+        for table in self.soup.find_all(
+            "table"
+        ):
 
-        return self._clean_text(best)
+            for row in table.find_all(
+                "tr"
+            ):
 
-    def format_dupatta(self, lines: List[str]) -> str:
-        dupatta_lines = [line for line in lines if self._classify_line(line) == "dupatta"]
+                cells = [
+                    c.get_text(
+                        " ",
+                        strip=True
+                    )
+                    for c in row.find_all(
+                        [
+                            "td",
+                            "th"
+                        ]
+                    )
+                ]
 
-        if not dupatta_lines:
-            return "Lawn."
 
-        # Prefer the line that directly mentions Dupatta
-        best = sorted(
-            dupatta_lines,
-            key=lambda line: (len(line), line.count(" ")),
-            reverse=False,
-        )[0]
+                if cells:
 
-        return self._clean_text(best)
+                    rows.append(
+                        " ".join(cells)
+                    )
 
-    def _extract_brand(self, soup: BeautifulSoup) -> str:
-        for attrs in [
-            {"name": "brand"},
-            {"property": "og:brand"},
-            {"itemprop": "brand"},
-            {"name": "author"},
-            {"property": "og:site_name"},
-            {"name": "application-name"},
+
+        return rows
+
+
+
+    def extract_all(self) -> List[str]:
+
+        content = []
+
+        content.extend(
+            self.extract_visible_text()
+        )
+
+        content.extend(
+            self.extract_tables()
+        )
+
+
+        return self._deduplicate(
+            content
+        )
+
+
+
+    @staticmethod
+    def _deduplicate(items: List[str]) -> List[str]:
+
+        seen = set()
+
+        output = []
+
+
+        for item in items:
+
+            key = item.lower()
+
+            if key not in seen:
+
+                seen.add(key)
+
+                output.append(item)
+
+
+        return output
+
+# ============================================================
+# Main Description Parser Foundation
+# ============================================================
+
+
+class DescriptionParser:
+    """
+    Main production description parser.
+
+    Responsibilities:
+
+        - Collect raw description sources
+        - Normalize content
+        - Prepare data for component extraction
+        - Produce structured description
+
+    This class intentionally does NOT:
+        - Extract price
+        - Extract SKU
+        - Extract images
+        - Extract brand
+
+    Those belong to separate modules.
+    """
+
+    def __init__(self):
+
+        self.cleaner = TextCleaner
+
+
+    # --------------------------------------------------------
+    # Public Entry Point
+    # --------------------------------------------------------
+
+    def parse(
+        self,
+        html: str
+    ) -> ParsedDescription:
+        """
+        Parse complete product HTML.
+        """
+
+        soup = BeautifulSoup(
+            html or "",
+            "html.parser"
+        )
+
+
+        raw_text = self.collect_description_text(
+            soup
+        )
+
+
+        result = ParsedDescription()
+
+        result.raw_text = raw_text
+
+
+        return result
+
+
+
+    # --------------------------------------------------------
+    # Description Source Collector
+    # --------------------------------------------------------
+
+    def collect_description_text(
+        self,
+        soup: BeautifulSoup
+    ) -> str:
+        """
+        Combine all possible description sources.
+
+        Priority:
+
+        1. JSON-LD description
+        2. HTML visible text
+        3. Tables
+        4. Meta descriptions
+        """
+
+        parts = []
+
+
+        # JSON-LD
+
+        structured = StructuredDataExtractor(
+            soup
+        )
+
+        json_description = (
+            structured.extract_description_text()
+        )
+
+
+        if json_description:
+
+            parts.append(
+                json_description
+            )
+
+
+
+        # HTML text
+
+        html_extractor = HTMLContentExtractor(
+            soup
+        )
+
+
+        html_lines = (
+            html_extractor.extract_all()
+        )
+
+
+        parts.extend(
+            html_lines
+        )
+
+
+
+        # Meta descriptions
+
+        parts.extend(
+            self.extract_meta_descriptions(
+                soup
+            )
+        )
+
+
+
+        cleaned = []
+
+        for item in parts:
+
+            value = self.cleaner.clean(
+                item
+            )
+
+            if value:
+
+                cleaned.append(
+                    value
+                )
+
+
+
+        return " ".join(
+            self.unique(
+                cleaned
+            )
+        )
+
+
+
+    # --------------------------------------------------------
+    # Meta Extraction
+    # --------------------------------------------------------
+
+    def extract_meta_descriptions(
+        self,
+        soup: BeautifulSoup
+    ) -> List[str]:
+
+        output = []
+
+
+        selectors = [
+
+            {
+                "name": "description"
+            },
+
+            {
+                "property": "og:description"
+            },
+
+            {
+                "name": "twitter:description"
+            }
+
+        ]
+
+
+        for attrs in selectors:
+
+            tag = soup.find(
+                "meta",
+                attrs=attrs
+            )
+
+
+            if tag and tag.get(
+                "content"
+            ):
+
+                output.append(
+                    tag.get(
+                        "content"
+                    )
+                )
+
+
+        return output
+
+
+
+    # --------------------------------------------------------
+    # Helpers
+    # --------------------------------------------------------
+
+    @staticmethod
+    def unique(
+        items: Iterable[str]
+    ) -> List[str]:
+
+        seen = set()
+
+        output = []
+
+
+        for item in items:
+
+            key = item.lower().strip()
+
+
+            if key not in seen:
+
+                seen.add(
+                    key
+                )
+
+                output.append(
+                    item
+                )
+
+
+        return output
+
+# ============================================================
+# Fashion Intelligence Layer
+# Component + Fabric Detection
+# ============================================================
+
+
+class FashionAnalyzer:
+    """
+    Converts raw description text into fashion components.
+
+    This layer contains generalized fashion rules only.
+
+    No:
+        - brand rules
+        - website rules
+        - XPath rules
+        - Shopify rules
+    """
+
+
+    def __init__(self):
+
+        self.fabric_map = FABRIC_MAP
+
+        self.component_map = COMPONENT_MAP
+
+        self.ignored_terms = IGNORED_TERMS
+
+
+
+    # --------------------------------------------------------
+    # Component Detection
+    # --------------------------------------------------------
+
+    def detect_component(
+        self,
+        text: str
+    ) -> Optional[str]:
+        """
+        Detect whether text belongs to:
+
+            Shirt
+            Trouser
+            Dupatta
+        """
+
+        if not text:
+            return None
+
+
+        lower = text.lower()
+
+
+
+        for keyword, component in (
+            self.component_map.items()
+        ):
+
+            if keyword in lower:
+
+                return component
+
+
+
+        return None
+
+
+
+    # --------------------------------------------------------
+    # Fabric Detection
+    # --------------------------------------------------------
+
+    def detect_fabrics(
+        self,
+        text: str
+    ) -> List[str]:
+        """
+        Extract normalized fabrics.
+        """
+
+        if not text:
+
+            return []
+
+
+        lower = text.lower()
+
+
+        found = []
+
+
+        # longest match first
+
+        fabrics = sorted(
+            self.fabric_map.items(),
+            key=lambda x: len(x[0]),
+            reverse=True
+        )
+
+
+        for keyword, canonical in fabrics:
+
+            if keyword in lower:
+
+                if canonical not in found:
+
+                    found.append(
+                        canonical
+                    )
+
+
+
+        return found
+
+
+
+    # --------------------------------------------------------
+    # Remove unwanted content
+    # --------------------------------------------------------
+
+    def remove_ignored_terms(
+        self,
+        text: str
+    ) -> str:
+        """
+        Removes:
+
+            - patches
+            - borders
+            - lace
+            - accessories
+            - embroidery techniques
+
+        """
+
+        if not text:
+
+            return ""
+
+
+
+        result = text
+
+
+
+        for term in self.ignored_terms:
+
+            result = re.sub(
+                rf"\b{re.escape(term)}\b",
+                " ",
+                result,
+                flags=re.IGNORECASE
+            )
+
+
+
+        result = re.sub(
+            r"\s+",
+            " ",
+            result
+        )
+
+
+        return result.strip()
+
+
+
+    # --------------------------------------------------------
+    # Sentence splitting
+    # --------------------------------------------------------
+
+    def split_sentences(
+        self,
+        text: str
+    ) -> List[str]:
+
+        if not text:
+
+            return []
+
+
+        text = text.replace(
+            "\n",
+            "."
+        )
+
+
+        parts = re.split(
+            r"[.!;|]",
+            text
+        )
+
+
+        output = []
+
+
+        for part in parts:
+
+            clean = TextCleaner.clean(
+                part
+            )
+
+
+            if clean:
+
+                output.append(
+                    clean
+                )
+
+
+        return output
+
+# ============================================================
+# Color + Embroidery Intelligence
+# ============================================================
+
+
+COLOR_MAP: Dict[str, str] = {
+
+    # Whites / neutrals
+
+    "white": "White",
+    "off white": "Off White",
+    "ivory": "Ivory",
+    "cream": "Cream",
+    "pearl white": "Pearl White",
+
+
+    # Pink shades
+
+    "pink": "Pink",
+    "light pink": "Light Pink",
+    "baby pink": "Baby Pink",
+    "tea pink": "Tea Pink",
+    "dusty pink": "Dusty Pink",
+    "blush": "Blush",
+    "peach": "Peach",
+    "coral": "Coral",
+
+
+    # Green shades
+
+    "green": "Green",
+    "mint green": "Mint Green",
+    "sea green": "Sea Green",
+    "sage green": "Sage Green",
+    "pista": "Pista",
+    "pistachio": "Pistachio",
+    "olive": "Olive",
+    "bottle green": "Bottle Green",
+
+
+    # Blue shades
+
+    "blue": "Blue",
+    "sky blue": "Sky Blue",
+    "ice blue": "Ice Blue",
+    "powder blue": "Powder Blue",
+    "royal blue": "Royal Blue",
+    "navy blue": "Navy Blue",
+    "firozi": "Firozi",
+    "ferozi": "Ferozi",
+    "turquoise": "Turquoise",
+
+
+    # Purple
+
+    "purple": "Purple",
+    "lavender": "Lavender",
+    "lilac": "Lilac",
+    "mauve": "Mauve",
+    "plum": "Plum",
+
+
+    # Red / Maroon
+
+    "red": "Red",
+    "maroon": "Maroon",
+    "wine": "Wine",
+    "burgundy": "Burgundy",
+    "rust": "Rust",
+
+
+    # Yellow / Gold
+
+    "yellow": "Yellow",
+    "mustard": "Mustard",
+    "gold": "Gold",
+    "golden": "Golden",
+
+
+    # Brown / Beige
+
+    "brown": "Brown",
+    "beige": "Beige",
+    "camel": "Camel",
+    "skin": "Skin",
+    "nude": "Nude",
+
+
+    # Black
+
+    "black": "Black",
+
+}
+
+
+
+class EmbroideryAnalyzer:
+    """
+    Extracts only embroidery placement.
+
+    IMPORTANT:
+
+    It intentionally removes:
+
+        sequins
+        dabka
+        naqshi
+        beads
+        stones
+        pearls
+        crystals
+
+    because these are techniques, not product structure.
+
+    Allowed output:
+
+        Neckline
+        Front
+        Back
+        Sleeves
+        Cuffs
+        Panels
+        Daman
+        Hem
+        Pallu
+    """
+
+
+
+    def __init__(self):
+
+        self.locations = EMBROIDERY_LOCATION_MAP
+
+
+        self.techniques = [
+
+            "sequin",
+            "sequins",
+            "dabka",
+            "naqshi",
+            "naqqashi",
+            "kora",
+            "bead",
+            "beads",
+            "pearls",
+            "stone",
+            "stones",
+            "crystal",
+            "diamante",
+            "mirror",
+            "tilla",
+            "zari",
+            "thread work"
+
+        ]
+
+
+
+    def extract_locations(
+        self,
+        text: str
+    ) -> List[str]:
+
+        if not text:
+
+            return []
+
+
+        lower = text.lower()
+
+
+        found = []
+
+
+
+        for keyword, location in (
+            self.locations.items()
+        ):
+
+            if keyword in lower:
+
+                if location not in found:
+
+                    found.append(
+                        location
+                    )
+
+
+        return found
+
+
+
+    def remove_techniques(
+        self,
+        text: str
+    ) -> str:
+
+        result = text
+
+
+
+        for technique in self.techniques:
+
+            result = re.sub(
+
+                rf"\b{re.escape(technique)}\b",
+
+                " ",
+
+                result,
+
+                flags=re.IGNORECASE
+
+            )
+
+
+        return re.sub(
+            r"\s+",
+            " ",
+            result
+        ).strip()
+
+# ============================================================
+# Component Description Builder
+# ============================================================
+
+
+class ComponentBuilder:
+    """
+    Builds structured clothing components.
+
+    Converts raw sentences into:
+
+        Shirt:
+            Fabric
+            Colors
+            Embroidery locations
+
+        Trouser:
+            Fabric
+            Colors
+
+        Dupatta:
+            Fabric
+            Colors
+            Embroidery locations
+    """
+
+
+
+    def __init__(self):
+
+        self.fashion = FashionAnalyzer()
+
+        self.embroidery = EmbroideryAnalyzer()
+
+
+
+    # --------------------------------------------------------
+    # Color extraction
+    # --------------------------------------------------------
+
+    def extract_colors(
+        self,
+        text: str
+    ) -> List[str]:
+
+        if not text:
+
+            return []
+
+
+        lower = text.lower()
+
+
+        colors = []
+
+
+        # longest first
+
+        ordered = sorted(
+            COLOR_MAP.items(),
+            key=lambda x: len(x[0]),
+            reverse=True
+        )
+
+
+        for keyword, value in ordered:
+
+            if keyword in lower:
+
+                if value not in colors:
+
+                    colors.append(
+                        value
+                    )
+
+
+        return colors
+
+
+
+    # --------------------------------------------------------
+    # Add sentence to component
+    # --------------------------------------------------------
+
+    def process_sentence(
+        self,
+        component: ComponentDescription,
+        sentence: str
+    ):
+
+        if not sentence:
+
+            return
+
+
+
+        sentence = self.fashion.remove_ignored_terms(
+            sentence
+        )
+
+
+        sentence = self.embroidery.remove_techniques(
+            sentence
+        )
+
+
+
+        # Fabric
+
+        fabrics = self.fashion.detect_fabrics(
+            sentence
+        )
+
+
+        for fabric in fabrics:
+
+            if fabric not in component.fabrics:
+
+                component.fabrics.append(
+                    fabric
+                )
+
+
+
+        # Colors
+
+        colors = self.extract_colors(
+            sentence
+        )
+
+
+        for color in colors:
+
+            if color not in component.colors:
+
+                component.colors.append(
+                    color
+                )
+
+
+
+        # Embroidery locations
+
+        locations = (
+            self.embroidery.extract_locations(
+                sentence
+            )
+        )
+
+
+        for location in locations:
+
+            if location not in component.embroidery_locations:
+
+                component.embroidery_locations.append(
+                    location
+                )
+
+
+
+    # --------------------------------------------------------
+    # Main build
+    # --------------------------------------------------------
+
+    def build(
+        self,
+        text: str
+    ) -> ParsedDescription:
+
+
+        result = ParsedDescription()
+
+        result.raw_text = text
+
+
+
+        sentences = (
+            self.fashion.split_sentences(
+                text
+            )
+        )
+
+
+
+        for sentence in sentences:
+
+
+            component_name = (
+                self.fashion.detect_component(
+                    sentence
+                )
+            )
+
+
+
+            if component_name == "Shirt":
+
+                self.process_sentence(
+                    result.shirt,
+                    sentence
+                )
+
+
+
+            elif component_name == "Trouser":
+
+                self.process_sentence(
+                    result.trouser,
+                    sentence
+                )
+
+
+
+            elif component_name == "Dupatta":
+
+                self.process_sentence(
+                    result.dupatta,
+                    sentence
+                )
+
+
+
+            else:
+
+                # Generic sentences without component
+                # are usually shirt information
+
+                self.process_sentence(
+                    result.shirt,
+                    sentence
+                )
+
+
+
+        return self.normalize_components(
+            result
+        )
+
+
+
+    # --------------------------------------------------------
+    # Component cleanup
+    # --------------------------------------------------------
+
+    def normalize_components(
+        self,
+        result: ParsedDescription
+    ) -> ParsedDescription:
+
+
+        for component in [
+
+            result.shirt,
+            result.trouser,
+            result.dupatta
+
         ]:
-            tag = soup.find("meta", attrs=attrs)
-            if tag and tag.get("content"):
-                return tag["content"].strip()
 
-        title = soup.title.get_text(" ", strip=True) if soup.title else ""
-        if title:
-            return title.split("|")[0].strip()
 
-        return "Unknown Brand"
+            component.fabrics = (
+                self.unique(
+                    component.fabrics
+                )
+            )
 
-    def final_description(self, html: str, brand: str) -> str:
-        soup = BeautifulSoup(html or "", "html.parser")
-        lines = self._extract_page_lines(soup)
 
-        shirt_desc = self.format_shirt(lines)
-        trouser_desc = self.format_trouser(lines)
-        dupatta_desc = self.format_dupatta(lines)
+            component.colors = (
+                self.unique(
+                    component.colors
+                )
+            )
 
-        brand_name = (brand or "").strip() or self._extract_brand(soup) or "Unknown Brand"
 
-        output = (
-            f"Designer/Brand:\n"
-            f"{brand_name}.\n\n"
-            f"Shirt:\n"
-            f"Fabric: {shirt_desc}\n\n"
-            f"Trousers:\n"
-            f"Fabric: {trouser_desc}\n\n"
-            f"Dupatta:\n"
-            f"Fabric: {dupatta_desc}"
+            component.embroidery_locations = (
+                self.unique(
+                    component.embroidery_locations
+                )
+            )
+
+
+
+        return result
+
+
+
+    @staticmethod
+    def unique(
+        values: List[str]
+    ) -> List[str]:
+
+        output = []
+
+        seen = set()
+
+
+        for value in values:
+
+            if value not in seen:
+
+                seen.add(
+                    value
+                )
+
+                output.append(
+                    value
+                )
+
+
+        return output
+
+# ============================================================
+# Output Formatter
+# ============================================================
+
+
+class DescriptionFormatter:
+    """
+    Converts structured description into
+    ProductExtractorV4 output format.
+
+    Rules:
+
+        - No embroidery techniques
+        - No accessories
+        - No marketing text
+        - Only useful production details
+    """
+
+
+
+    def format_component(
+        self,
+        component: ComponentDescription
+    ) -> str:
+
+        lines = []
+
+
+        # Fabric
+
+        if component.fabrics:
+
+            lines.append(
+                "Fabric: "
+                +
+                ", ".join(
+                    component.fabrics
+                )
+            )
+
+
+
+        # Embroidery locations
+
+        if component.embroidery_locations:
+
+            lines.append(
+                "Embroidery: "
+                +
+                ", ".join(
+                    component.embroidery_locations
+                )
+            )
+
+
+
+        # Colors
+
+        if component.colors:
+
+            lines.append(
+                "Color: "
+                +
+                ", ".join(
+                    component.colors
+                )
+            )
+
+
+
+        if not lines:
+
+            lines.append(
+                "Not detected"
+            )
+
+
+        return "\n".join(
+            lines
         )
 
-        return output.strip()
 
-    def get_shirt_fabric(self, html: str) -> str:
-        soup = BeautifulSoup(html or "", "html.parser")
-        lines = self._extract_page_lines(soup)
 
-        for line in lines:
-            fabric = self._extract_fabric_from_line(line)
-            if fabric:
-                return fabric
+    def format(
+        self,
+        description: ParsedDescription
+    ) -> str:
 
-        return "Lawn"
+
+        output = []
+
+
+        output.append(
+            "Shirt:"
+        )
+
+
+        output.append(
+            self.format_component(
+                description.shirt
+            )
+        )
+
+
+
+        output.append(
+            ""
+        )
+
+
+        output.append(
+            "Trouser:"
+        )
+
+
+        output.append(
+            self.format_component(
+                description.trouser
+            )
+        )
+
+
+
+        output.append(
+            ""
+        )
+
+
+        output.append(
+            "Dupatta:"
+        )
+
+
+        output.append(
+            self.format_component(
+                description.dupatta
+            )
+        )
+
+
+
+        return "\n".join(
+            output
+        )
+
+
+
+
+
+# ============================================================
+# Production Parser API
+# ============================================================
+
+
+class ProductionDescriptionParser:
+    """
+    High level parser used by ProductExtractorV4.
+
+    Usage:
+
+        parser = ProductionDescriptionParser()
+
+        result = parser.parse(html)
+
+        text = parser.format(result)
+    """
+
+
+
+    def __init__(self):
+
+        self.base_parser = DescriptionParser()
+
+        self.builder = ComponentBuilder()
+
+        self.formatter = DescriptionFormatter()
+
+
+
+    def parse(
+        self,
+        html: str
+    ) -> ParsedDescription:
+
+
+        collected = (
+            self.base_parser.collect_description_text(
+                BeautifulSoup(
+                    html or "",
+                    "html.parser"
+                )
+            )
+        )
+
+
+        return self.builder.build(
+            collected
+        )
+
+
+
+    def format(
+        self,
+        parsed: ParsedDescription
+    ) -> str:
+
+        return self.formatter.format(
+            parsed
+        )
+
+
+
+    def parse_and_format(
+        self,
+        html: str
+    ) -> str:
+
+
+        parsed = self.parse(
+            html
+        )
+
+
+        return self.format(
+            parsed
+        )
+
+# ============================================================
+# Backward Compatibility Layer
+# ============================================================
+
+
+class LegacyDescriptionParser:
+    """
+    Compatibility wrapper.
+
+    Keeps existing ProductExtractorV4 imports working.
+
+    Existing usage:
+
+        parser = DescriptionParser()
+
+        parser.final_description(
+            html,
+            brand
+        )
+
+    continues to work.
+    """
+
+
+
+    def __init__(self):
+
+        self.parser = ProductionDescriptionParser()
+
+
+
+    def final_description(
+        self,
+        html: str,
+        brand: str = ""
+    ) -> str:
+
+
+        try:
+
+            description = (
+                self.parser.parse_and_format(
+                    html
+                )
+            )
+
+
+            if brand:
+
+                return (
+                    "Designer/Brand:\n"
+                    f"{brand}\n\n"
+                    +
+                    description
+                )
+
+
+            return description
+
+
+
+        except Exception as exc:
+
+            logger.exception(
+                "Description parsing failed: %s",
+                exc
+            )
+
+            return ""
+
+
+
+    def get_shirt_fabric(
+        self,
+        html: str
+    ) -> str:
+
+
+        try:
+
+            parsed = (
+                self.parser.parse(
+                    html
+                )
+            )
+
+
+            if parsed.shirt.fabrics:
+
+                return (
+                    parsed.shirt.fabrics[0]
+                )
+
+
+        except Exception as exc:
+
+            logger.exception(
+                "Fabric extraction failed: %s",
+                exc
+            )
+
+
+        return ""
+
+
+
+
+
+# ============================================================
+# Module Level Convenience Functions
+# ============================================================
+
+
+def parse_description(
+    html: str
+) -> ParsedDescription:
+    """
+    Simple parser interface.
+    """
+
+    parser = ProductionDescriptionParser()
+
+    return parser.parse(
+        html
+    )
+
+
+
+
+
+def format_description(
+    html: str
+) -> str:
+    """
+    Parse and directly return formatted output.
+    """
+
+    parser = ProductionDescriptionParser()
+
+    return parser.parse_and_format(
+        html
+    )
+
+
+
+
+
+# ============================================================
+# Final Compatibility Alias
+# ============================================================
+
+
+# Existing project code expects:
+#
+# from extractor.description_parser import DescriptionParser
+#
+# Therefore expose the production wrapper.
+
+
+OriginalDescriptionParser = DescriptionParser
+
+
+DescriptionParser = LegacyDescriptionParser
