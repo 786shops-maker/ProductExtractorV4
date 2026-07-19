@@ -243,3 +243,150 @@ FABRICS = {
         "habotai"
     ]
 }
+# ==========================================================
+# DESIGNER COLOUR DATABASE
+# ==========================================================
+
+COLORS = [
+
+    # ---------- White ----------
+
+    "White",
+    "Off White",
+    "Ivory",
+    "Pearl White",
+    "Cream",
+    "Snow White",
+
+    # ---------- Beige ----------
+
+    "Beige",
+    "Light Beige",
+    "Dark Beige",
+    "Sand",
+    "Camel",
+    "Nude",
+    "Taupe",
+
+    # ---------- Pink ----------
+
+    "Pink",
+    "Baby Pink",
+    "Tea Pink",
+    "Powder Pink",
+    "Blush Pink",
+    "Rose Pink",
+    "Dusty Pink",
+    "Hot Pink",
+    "Deep Pink",
+    "Shocking Pink",
+    "Coral Pink",
+
+    # ---------- Peach ----------
+
+    "Peach",
+    "Light Peach",
+    "Dark Peach",
+    "Coral",
+    "Salmon",
+
+    # ---------- Red ----------
+
+    "Red",
+    "Deep Red",
+    "Cherry Red",
+    "Ruby",
+    "Crimson",
+    "Scarlet",
+    "Maroon",
+    "Wine",
+    "Burgundy",
+
+    # ---------- Orange ----------
+
+    "Orange",
+    "Burnt Orange",
+    "Rust",
+    "Terracotta",
+
+    # ---------- Yellow ----------
+
+    "Yellow",
+    "Mustard",
+    "Mustard Yellow",
+    "Lemon",
+    "Lemon Yellow",
+    "Golden Yellow",
+    "Sunflower",
+
+    # ---------- Green ----------
+
+    "Green",
+    "Sea Green",
+    "Sage Green",
+    "Olive Green",
+    "Bottle Green",
+    "Mint",
+    "Mint Green",
+    "Emerald",
+    "Emerald Green",
+    "Parrot Green",
+    "Mehndi",
+    "Pista",
+    "Pista Green",
+    "Apple Green",
+    "Forest Green",
+
+    # ---------- Blue ----------
+
+    "Blue",
+    "Sky Blue",
+    "Ice Blue",
+    "Powder Blue",
+    "Royal Blue",
+    "Navy Blue",
+    "Midnight Blue",
+    "Turquoise",
+    "Turquoise Blue",
+    "Aqua",
+    "Aqua Blue",
+    "Teal",
+    "Ferozi",
+    "Peacock Blue",
+
+    # ---------- Purple ----------
+
+    "Purple",
+    "Lavender",
+    "Lilac",
+    "Mauve",
+    "Deep Purple",
+    "Violet",
+    "Plum",
+
+    # ---------- Brown ----------
+
+    "Brown",
+    "Chocolate",
+    "Chocolate Brown",
+    "Coffee",
+    "Coffee Brown",
+    "Mocha",
+
+    # ---------- Grey ----------
+
+    "Grey",
+    "Light Grey",
+    "Dark Grey",
+    "Charcoal",
+    "Silver",
+    "Ash Grey",
+
+    # ---------- Black ----------
+
+    "Black",
+    "Jet Black",
+    "Charcoal Black",
+
+]
+
