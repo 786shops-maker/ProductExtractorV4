@@ -1,27 +1,80 @@
 """
 brand_detector.py
-Detect brand from domain with easy-to-edit mappings.
+
+Production Brand Detector
+
+Features
+--------
+* JSON-LD Brand
+* Shopify Vendor
+* WooCommerce
+* Magento
+* Breadcrumb
+* Meta Tags
+* Product Title
+* Logo Alt
+* Domain Detection
+* Candidate Scoring
 """
+
+from __future__ import annotations
+
+import logging
+import re
+from dataclasses import dataclass
+from typing import List, Optional
 from urllib.parse import urlparse
 
+logger = logging.getLogger("ProductExtractor")
+
+
+@dataclass(order=True)
+class BrandCandidate:
+    score: int
+    brand: str
+    source: str
+
+
 class BrandDetector:
-    BRAND_MAP = {
-        "sapphireonline.pk": "Sapphire",
-        "asimjofa.com": "Asim Jofa",
-        "mariab.pk": "Maria B",
-        "baroque.pk": "Baroque",
-        "zellbury.com": "Zellbury",
-        "khaadi.com": "Khaadi",
-        "limelight.pk": "Limelight",
-        "ethnic.pk": "Ethnic",
-        "alkaramstudio.com": "Alkaram",  # CHANGED: Just "Alkaram"
-        "gulahmedshop.com": "Gul Ahmed",
-        "junaidjamshed.com": "J.",
-        "crossstitch.pk": "Cross Stitch",
-        "charizma.com": "Charizma",
-        "laam.pk": "LAAM",
-        "sanaullastore.com": "Sanaulla Store"
-    }
+
+    def __init__(self):
+
+        self.candidates: List[BrandCandidate] = []
+
+        self.brand_alias = {
+
+            "asim jofa": "Asim Jofa",
+            "azure": "Azure",
+            "baroque": "Baroque",
+            "bin saeed": "Bin Saeed",
+            "charizma": "Charizma",
+            "cross stitch": "Cross Stitch",
+            "edenrobe": "Edenrobe",
+            "elan": "Elan",
+            "ethnic": "Ethnic",
+            "faiza saqlain": "Faiza Saqlain",
+            "gul ahmed": "Gul Ahmed",
+            "ideas": "Gul Ahmed",
+            "imrozia": "Imrozia",
+            "iznik": "Iznik",
+            "j.": "Junaid Jamshed",
+            "jj": "Junaid Jamshed",
+            "junaid jamshed": "Junaid Jamshed",
+            "kanwal malik": "Kanwal Malik",
+            "khaadi": "Khaadi",
+            "limelight": "Limelight",
+            "maria b": "Maria B",
+            "mariab": "Maria B",
+            "nishat linen": "Nishat Linen",
+            "noor by saadia asad": "Noor by Saadia Asad",
+            "qalamkar": "Qalamkar",
+            "ramsha": "Ramsha",
+            "rang rasiya": "Rang Rasiya",
+            "sana safinaz": "Sana Safinaz",
+            "sapphire": "Sapphire",
+            "so kamal": "So Kamal",
+            "zellbury": "Zellbury",
+        }
     
     def detect(self, url: str) -> str:
         host = urlparse(url).netloc.lower()
