@@ -383,5 +383,16 @@ class BrandDetector:
                     "domain"
 
                 )
+_default_detector = BrandDetector()
 
+
+def detect_brand(html="", url=""):
+
+    return _default_detector.detect(
+
+        html=html,
+
+        url=url
+
+    )
 
